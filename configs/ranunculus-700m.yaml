@@ -1,0 +1,77 @@
+# Ranunculus-700M PT config (design §5 + §6 + §11).
+# Values are tuned for a single RTX PRO 6000 Blackwell 96GB.
+
+tokenizer_dir: artifacts/tokenizer
+final_dir: artifacts/ranunculus-700m/final
+attn_implementation: flash_attention_2
+gradient_checkpointing: true
+
+model:
+  vocab_size: 128000
+  hidden_size: 1280
+  intermediate_size: 3584
+  num_hidden_layers: 30
+  num_attention_heads: 16
+  num_key_value_heads: 4
+  head_dim: 80
+  hidden_act: silu
+  max_position_embeddings: 8192
+  tie_word_embeddings: true
+  rms_norm_eps: 1.0e-6
+  rope_parameters:
+    rope_type: default
+    rope_theta: 500000.0
+  use_sliding_window: false
+  attention_bias: false
+  attention_dropout: 0.0
+  initializer_range: 0.02
+
+data:
+  seq_len: 8192
+  train_bins:
+    - artifacts/packed/train_en.bin
+    - artifacts/packed/train_de.bin
+    - artifacts/packed/train_ja.bin
+    - artifacts/packed/train_zh.bin
+  val_bins:
+    en: artifacts/packed/val_en.bin
+    de: artifacts/packed/val_de.bin
+    ja: artifacts/packed/val_ja.bin
+    zh: artifacts/packed/val_zh.bin
+
+per_lang_eval_every: 500
+per_lang_eval_batch_size: 1
+per_lang_eval_max_batches: 64
+param_norm_every: 1000
+tokens_per_sec_every: 100
+
+training:
+  output_dir: artifacts/ranunculus-700m/pt
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 16
+  max_steps: 28800
+  learning_rate: 3.0e-4
+  weight_decay: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  warmup_steps: 2000
+  lr_scheduler_type: cosine
+  lr_scheduler_kwargs:
+    min_lr_rate: 0.1
+  max_grad_norm: 1.0
+  bf16: true
+  gradient_checkpointing: true
+  gradient_checkpointing_kwargs:
+    use_reentrant: false
+  save_steps: 2000
+  save_total_limit: 15
+  logging_steps: 10
+  eval_strategy: "no"
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  report_to:
+    - wandb
+  run_name: ranunculus-700m
+  seed: 42
+  torch_compile: false

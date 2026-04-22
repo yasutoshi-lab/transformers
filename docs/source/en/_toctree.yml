@@ -803,6 +803,8 @@
         title: Qwen3Next
       - local: model_doc/rag
         title: RAG
+      - local: model_doc/ranunculus
+        title: Ranunculus
       - local: model_doc/recurrent_gemma
         title: RecurrentGemma
       - local: model_doc/reformer

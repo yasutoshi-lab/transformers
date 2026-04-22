@@ -352,6 +352,7 @@ if TYPE_CHECKING:
     from .qwen3_vl import *
     from .qwen3_vl_moe import *
     from .rag import *
+    from .ranunculus import *
     from .recurrent_gemma import *
     from .reformer import *
     from .regnet import *
