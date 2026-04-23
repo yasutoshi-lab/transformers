@@ -29,18 +29,24 @@ class PackedDataset(torch.utils.data.Dataset):
     Args:
         bin_paths: List of .bin files produced by prepare_ranunculus_data.py.
         seq_len: Fixed sequence length (design default: 8192).
+        num_epochs: How many times to iterate over the data. Setting 2 doubles
+            ``__len__`` so Trainer's ``max_steps`` accounts for two full passes
+            without duplicating the .bin files on disk.
     """
 
-    def __init__(self, bin_paths: list[str], seq_len: int = 8192):
+    def __init__(self, bin_paths: list[str], seq_len: int = 8192, num_epochs: int = 1):
         self.arrs = [np.memmap(p, dtype=np.uint32, mode="r") for p in bin_paths]
         self.seq_len = seq_len
+        self.num_epochs = num_epochs
         lengths = [len(a) // seq_len for a in self.arrs]
         self.offsets = np.cumsum([0, *lengths])
+        self._per_epoch_len = int(self.offsets[-1])
 
     def __len__(self) -> int:
-        return int(self.offsets[-1])
+        return self._per_epoch_len * self.num_epochs
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        index = index % self._per_epoch_len  # wrap at epoch boundary
         file_idx = int(np.searchsorted(self.offsets[1:], index, side="right"))
         local = index - self.offsets[file_idx]
         start = local * self.seq_len

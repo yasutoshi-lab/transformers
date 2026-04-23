@@ -153,7 +153,7 @@ def parse_tool_calls(processor, generated_ids, schema: dict) -> list[dict] | Non
     if not isinstance(parsed, list):
         parsed = [parsed]
     tool_calls = [_normalize_tool_call(tool_call) for tool_call in parsed]
-    return tool_calls if tool_calls else None
+    return tool_calls or None
 
 
 class DownloadAggregator:

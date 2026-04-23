@@ -12,11 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Ranunculus-700M pretraining entrypoint (design §5 + §10 + §11).
+"""Ranunculus-1B pretraining entrypoint (design §5 + §10 + §11).
 
 Usage:
 
-    python run_ranunculus_pretrain.py --config configs/ranunculus-700m.yaml
+    CUDA_VISIBLE_DEVICES=0 python run_ranunculus_pretrain.py --config configs/ranunculus-1b.yaml
 
 The YAML file holds everything: model hyperparameters, packed .bin paths per
 language, and the `TrainingArguments` dict. Only the PT stage is covered here.
@@ -25,6 +25,7 @@ language, and the `TrainingArguments` dict. Only the PT stage is covered here.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import torch
@@ -85,7 +86,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--gpu", type=str, default=None, help="CUDA_VISIBLE_DEVICES override (e.g. '0')")
     cli_args = parser.parse_args()
+
+    if cli_args.gpu is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = cli_args.gpu
+
     cfg = load_yaml(cli_args.config)
 
     tokenizer = AutoTokenizer.from_pretrained(cfg["tokenizer_dir"])
@@ -98,7 +104,8 @@ def main() -> None:
         model.gradient_checkpointing_enable()
 
     seq_len = cfg["data"]["seq_len"]
-    train_ds = PackedDataset(cfg["data"]["train_bins"], seq_len=seq_len)
+    num_epochs = cfg["data"].get("num_epochs", 2)
+    train_ds = PackedDataset(cfg["data"]["train_bins"], seq_len=seq_len, num_epochs=num_epochs)
     val_ds_by_lang = {lang: PackedDataset([path], seq_len=seq_len) for lang, path in cfg["data"]["val_bins"].items()}
 
     args = TrainingArguments(**cfg["training"])

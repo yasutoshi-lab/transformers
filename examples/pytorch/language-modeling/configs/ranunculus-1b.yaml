@@ -1,0 +1,114 @@
+# Ranunculus-1B 事前学習設定（設計書 multilingual-1b-llm-pretraining-design.md 準拠）
+# =============================================================================
+# 使用前に必ず変更が必要な項目:
+#   tokenizer_dir  : train_ranunculus_tokenizer.py で生成したトークナイザーのパス
+#   data.train_bins: prepare_ranunculus_data.py で生成した .bin ファイルのパスリスト
+#   data.val_bins  : 言語別バリデーション用 .bin ファイルのパス
+#   training.output_dir / final_dir: 保存先ディレクトリ
+# =============================================================================
+
+# ---- トークナイザー ----
+tokenizer_dir: artifacts/tokenizer   # train_ranunculus_tokenizer.py の出力先に合わせる
+
+# ---- モデルアーキテクチャ（設計書 §1）----
+model:
+  vocab_size: 96000
+  hidden_size: 1536
+  num_hidden_layers: 35
+  num_attention_heads: 12
+  num_key_value_heads: 3
+  head_dim: 128
+  intermediate_size: 4096
+  hidden_act: silu
+  rms_norm_eps: 1.0e-6
+  max_position_embeddings: 8192
+  rope_parameters:
+    rope_type: default
+    rope_theta: 500000.0
+  tie_word_embeddings: true
+  attention_bias: false
+  attention_dropout: 0.0
+  initializer_range: 0.02
+  use_cache: false   # 訓練中は KV キャッシュ不要
+
+# ---- Attention 実装（設計書 §5）----
+# flash_attention_2 を使うにはソースビルドが必要:
+#   uv pip uninstall flash-attn && pip install flash-attn --no-build-isolation --no-binary :all:
+# （ビルドに15-30分かかる。完了後この行を flash_attention_2 に変更）
+attn_implementation: sdpa
+
+# ---- 勾配チェックポイント（設計書 §5 VRAM 計算）----
+gradient_checkpointing: true
+
+# ---- データ（設計書 §6・§7）----
+data:
+  seq_len: 8192
+  num_epochs: 2       # 全データを 2 周（温度サンプリング不使用）
+  # prepare_ranunculus_data.py が出力する packed .bin のパスを列挙する
+  # 例: [./data/en_train_00.bin, ./data/en_train_01.bin, ./data/ja_train_00.bin]
+  train_bins:
+    - artifacts/packed/train_en.bin
+    - artifacts/packed/train_ja.bin
+  val_bins:
+    en: artifacts/packed/val_en.bin
+    ja: artifacts/packed/val_ja.bin
+
+# ---- コールバック間隔（設計書 §10）----
+per_lang_eval_every: 500
+per_lang_eval_batch_size: 1
+per_lang_eval_max_batches: 64
+param_norm_every: 1000
+tokens_per_sec_every: 100
+
+# ---- TrainingArguments（設計書 §5）----
+training:
+  output_dir: ./checkpoints/ranunculus-1b   # 要変更: チェックポイント保存先
+
+  # バッチ設定（有効バッチ = 4 × 16 × 8192 = 524,288 tokens ≈ 0.5M）
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 16
+
+  # 最適化
+  learning_rate: 3.0e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  # スケジューラ（設計書 §5）
+  lr_scheduler_type: cosine_with_min_lr
+  warmup_steps: 2000
+  lr_scheduler_kwargs:
+    min_lr_rate: 0.1   # min_lr = peak × 0.1 = 3e-5
+
+  # 訓練長（設計書 §5: 21.2B tokens / 524K tokens/step ≈ 40,500 steps）
+  max_steps: 40500
+
+  # 精度
+  bf16: true
+  bf16_full_eval: true
+
+  # チェックポイント（設計書 §11）
+  save_strategy: steps
+  save_steps: 2000
+  save_total_limit: 21
+
+  # ロギング（設計書 §10）
+  logging_strategy: steps
+  logging_steps: 10
+  report_to: wandb   # wandb 未使用の場合は none に変更
+
+  # 評価（PerLanguageEvalCallback が担うため本体の eval は無効化）
+  eval_strategy: "no"
+
+  # 再現性
+  seed: 42
+  data_seed: 42
+
+  # I/O
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+
+# ---- 最終モデル保存先（設計書 §11）----
+final_dir: ./models/ranunculus-1b-final   # 要変更: 最終モデル保存先

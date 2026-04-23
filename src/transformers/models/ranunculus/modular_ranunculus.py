@@ -32,17 +32,17 @@ from ..qwen3.modeling_qwen3 import (
 )
 
 
-@auto_docstring(checkpoint="yasutoshi-lab/ranunculus-700m")
+@auto_docstring(checkpoint="yasutoshi-lab/ranunculus-1b")
 @strict
 class RanunculusConfig(Qwen3Config):
     r"""
     ```python
     >>> from transformers import RanunculusModel, RanunculusConfig
 
-    >>> # Initializing a Ranunculus-700M style configuration
+    >>> # Initializing a Ranunculus-1B style configuration
     >>> configuration = RanunculusConfig()
 
-    >>> # Initializing a model from the Ranunculus-700M style configuration
+    >>> # Initializing a model from the Ranunculus-1B style configuration
     >>> model = RanunculusModel(configuration)
 
     >>> # Accessing the model configuration
@@ -52,13 +52,13 @@ class RanunculusConfig(Qwen3Config):
 
     model_type = "ranunculus"
 
-    vocab_size: int = 128_000
-    hidden_size: int = 1_280
-    intermediate_size: int = 3_584
-    num_hidden_layers: int = 30
-    num_attention_heads: int = 16
-    num_key_value_heads: int | None = 4
-    head_dim: int = 80
+    vocab_size: int = 96_000
+    hidden_size: int = 1_536
+    intermediate_size: int = 4_096
+    num_hidden_layers: int = 35
+    num_attention_heads: int = 12
+    num_key_value_heads: int | None = 3
+    head_dim: int = 128
     hidden_act: str = "silu"
     max_position_embeddings: int = 8_192
     initializer_range: float = 0.02
@@ -69,7 +69,7 @@ class RanunculusConfig(Qwen3Config):
     attention_bias: bool = False
     use_sliding_window: bool = False
     sliding_window: int | None = None
-    max_window_layers: int = 30
+    max_window_layers: int = 35
     attention_dropout: float | int = 0.0
 
     def __post_init__(self, **kwargs):

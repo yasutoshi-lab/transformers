@@ -12,12 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Train a 128K BPE + byte-fallback tokenizer for Ranunculus (design §4).
+"""Train a 96K BPE + byte-fallback tokenizer for Ranunculus (design §4).
 
 Design choices:
-  * vocab_size = 128_000 = 127_744 BPE + 256 reserved specials
+  * vocab_size = 96_000 = 95_744 BPE + 256 reserved specials
   * Byte-level pre-tokenizer + NFC normalization (no lowercasing)
-  * Balanced 500M tokens × {en, de, ja, zh} corpus for BPE training
+  * Balanced 500M tokens × {en, ja} corpus for BPE training
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from tokenizers.trainers import BpeTrainer
 from transformers import PreTrainedTokenizerFast
 
 
-LANGUAGES = ("en", "de", "ja", "zh")
+LANGUAGES = ("en", "ja")
 
 SPECIAL_TOKENS = [
     "<|endoftext|>",
@@ -103,7 +103,7 @@ def main() -> None:
         type=int,
         default=2 * 1024 * 1024 * 1024,  # ~2GB per language ≈ 500M tokens target.
     )
-    parser.add_argument("--vocab_size_core", type=int, default=127_744)
+    parser.add_argument("--vocab_size_core", type=int, default=95_744)
     args = parser.parse_args()
 
     corpus_files: list[str] = []
@@ -136,7 +136,7 @@ def main() -> None:
     fast.save_pretrained(args.out_dir)
     # Sanity checks from design §4 checklist.
     # vocab_size returns only the BPE core vocab; len() includes added specials.
-    assert len(fast) == 128_000, len(fast)
+    assert len(fast) == 96_000, len(fast)
     print(f"[done] saved to {args.out_dir}, vocab_size={len(fast)}")
 
 
