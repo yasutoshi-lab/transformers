@@ -1,8 +1,8 @@
-# Ranunculus-700M PT config (design §5 + §6 + §11).
-# Values are tuned for a single RTX PRO 6000 Blackwell 96GB.
+# Ranunculus-700M smoke-run config (M4: 100 steps, single GPU validation).
+# Verifies flash_attn_2 + gradient_checkpointing work end-to-end.
 
 tokenizer_dir: artifacts/tokenizer
-final_dir: artifacts/ranunculus-700m/final
+final_dir: artifacts/ranunculus-700m-smoke/final
 attn_implementation: flash_attention_2
 gradient_checkpointing: true
 
@@ -39,23 +39,23 @@ data:
     ja: artifacts/packed/val_ja.bin
     zh: artifacts/packed/val_zh.bin
 
-per_lang_eval_every: 500
+per_lang_eval_every: 50
 per_lang_eval_batch_size: 1
-per_lang_eval_max_batches: 64
-param_norm_every: 1000
-tokens_per_sec_every: 100
+per_lang_eval_max_batches: 4
+param_norm_every: 50
+tokens_per_sec_every: 10
 
 training:
-  output_dir: artifacts/ranunculus-700m/pt
+  output_dir: artifacts/ranunculus-700m-smoke/pt
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 16
-  max_steps: 28800
+  max_steps: 100
   learning_rate: 3.0e-4
   weight_decay: 0.1
   adam_beta1: 0.9
   adam_beta2: 0.95
   adam_epsilon: 1.0e-8
-  warmup_steps: 2000
+  warmup_steps: 10
   lr_scheduler_type: cosine_with_min_lr
   lr_scheduler_kwargs:
     min_lr_rate: 0.1
@@ -64,14 +64,13 @@ training:
   gradient_checkpointing: true
   gradient_checkpointing_kwargs:
     use_reentrant: false
-  save_steps: 2000
-  save_total_limit: 15
+  save_steps: 100
+  save_total_limit: 1
   logging_steps: 10
   eval_strategy: "no"
   dataloader_num_workers: 4
   dataloader_pin_memory: true
-  report_to:
-    - wandb
-  run_name: ranunculus-700m
+  report_to: []
+  run_name: ranunculus-700m-smoke
   seed: 42
   torch_compile: false

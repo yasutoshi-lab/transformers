@@ -93,7 +93,7 @@ def main() -> None:
     model_cfg = RanunculusConfig(**cfg["model"])
     if cfg.get("attn_implementation"):
         model_cfg._attn_implementation = cfg["attn_implementation"]
-    model = RanunculusForCausalLM(model_cfg)
+    model = RanunculusForCausalLM(model_cfg).to(torch.bfloat16)
     if cfg.get("gradient_checkpointing", True):
         model.gradient_checkpointing_enable()
 
@@ -118,7 +118,7 @@ def main() -> None:
         model=model,
         args=args,
         train_dataset=train_ds,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         callbacks=callbacks,
     )
     trainer.train(resume_from_checkpoint=cli_args.resume or cfg.get("resume"))

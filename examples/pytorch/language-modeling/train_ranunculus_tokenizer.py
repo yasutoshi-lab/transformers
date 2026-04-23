@@ -135,8 +135,9 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     fast.save_pretrained(args.out_dir)
     # Sanity checks from design §4 checklist.
-    assert fast.vocab_size == 128_000, fast.vocab_size
-    print(f"[done] saved to {args.out_dir}, vocab_size={fast.vocab_size}")
+    # vocab_size returns only the BPE core vocab; len() includes added specials.
+    assert len(fast) == 128_000, len(fast)
+    print(f"[done] saved to {args.out_dir}, vocab_size={len(fast)}")
 
 
 if __name__ == "__main__":

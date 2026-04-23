@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Iterable
 
@@ -22,6 +23,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from transformers import TrainerCallback
+
+logger = logging.getLogger(__name__)
 
 
 class PerLanguageEvalCallback(TrainerCallback):
@@ -63,13 +66,10 @@ class PerLanguageEvalCallback(TrainerCallback):
             return
         model = kwargs["model"]
         metrics = {f"val_loss/{lang}": self._eval_one(model, ds) for lang, ds in self.datasets_by_lang.items()}
+        logger.info("step %d: %s", state.global_step, metrics)
+        print(f"[step {state.global_step}] {metrics}", flush=True)
         if "logs" in kwargs and isinstance(kwargs["logs"], dict):
             kwargs["logs"].update(metrics)
-        else:
-            # Trigger a log event through the Trainer so downstream loggers (e.g. wandb) pick it up.
-            trainer = kwargs.get("trainer")
-            if trainer is not None:
-                trainer.log(metrics)
 
 
 class ParamNormCallback(TrainerCallback):
@@ -95,9 +95,8 @@ class ParamNormCallback(TrainerCallback):
                 norms.get(f"param_norm/{key}", 0.0) + float(p.detach().float().norm().item()) ** 2
             )
         norms = {k: v**0.5 for k, v in norms.items()}
-        trainer = kwargs.get("trainer")
-        if trainer is not None:
-            trainer.log(norms)
+        logger.info("step %d param_norms: %s", state.global_step, norms)
+        print(f"[step {state.global_step}] param_norms: {norms}", flush=True)
 
 
 class TokensPerSecCallback(TrainerCallback):
@@ -124,9 +123,8 @@ class TokensPerSecCallback(TrainerCallback):
 
         elapsed = time.time() - self._window_start
         tps = self._window_tokens / max(elapsed, 1e-9)
-        trainer = kwargs.get("trainer")
-        if trainer is not None:
-            trainer.log({"tokens_per_sec": tps})
+        logger.info("step %d: tokens_per_sec=%.1f", state.global_step, tps)
+        print(f"[step {state.global_step}] tokens_per_sec={tps:.1f}", flush=True)
         self._window_start = time.time()
         self._window_tokens = 0
 
