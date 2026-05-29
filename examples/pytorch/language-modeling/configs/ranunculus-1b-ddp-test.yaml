@@ -91,6 +91,9 @@ training:
 
   eval_strategy: "no"
 
+  # NCCL が cu129 + Blackwell でクラッシュするため gloo にフォールバック
+  ddp_backend: gloo
+
   seed: 42
   data_seed: 42
 
