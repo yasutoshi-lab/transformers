@@ -1,15 +1,17 @@
-# Ranunculus-1B DDP 動作検証用設定
+# Ranunculus-1B 事前学習設定（DDP 2GPU 版）
 # =============================================================================
-# 目的: torchrun 2GPU DDP が正常に動作するかを短時間で確認する
+# 単一 GPU 版（ranunculus-1b.yaml）との差分:
+#   - gradient_accumulation_steps: 16 → 8（world_size=2 で有効バッチを同一に保つ）
+#   - ddp_backend: gloo（NCCL が cu129 + Blackwell で SIGSEGV のため）
 # 実行コマンド:
 #   cd examples/pytorch/language-modeling
-#   torchrun --nproc_per_node=2 run_ranunculus_pretrain.py --config configs/ranunculus-1b-ddp-test.yaml
+#   uv run torchrun --nproc_per_node=2 run_ranunculus_pretrain.py --config configs/ranunculus-1b-ddp.yaml
 # =============================================================================
 
 # ---- トークナイザー ----
 tokenizer_dir: artifacts-0/tokenizer
 
-# ---- モデルアーキテクチャ（本番と同一）----
+# ---- モデルアーキテクチャ（設計書 §1）----
 model:
   vocab_size: 96000
   hidden_size: 1536
@@ -28,15 +30,18 @@ model:
   attention_bias: false
   attention_dropout: 0.0
   initializer_range: 0.02
-  use_cache: false
+  use_cache: false   # 訓練中は KV キャッシュ不要
 
+# ---- Attention 実装（設計書 §5）----
 attn_implementation: sdpa
+
+# ---- 勾配チェックポイント（設計書 §5 VRAM 計算）----
 gradient_checkpointing: true
 
-# ---- データ（本番と同一パス）----
+# ---- データ（設計書 §6・§7）----
 data:
   seq_len: 8192
-  num_epochs: 2
+  num_epochs: 2       # 全データを 2 周（温度サンプリング不使用）
   train_bins:
     - artifacts-0/packed/train_en.bin
     - artifacts-0/packed/train_ja.bin
@@ -44,19 +49,19 @@ data:
     en: artifacts-0/packed/val_en.bin
     ja: artifacts-0/packed/val_ja.bin
 
-# ---- コールバック間隔（短縮）----
-per_lang_eval_every: 20
+# ---- コールバック間隔（設計書 §10）----
+per_lang_eval_every: 500
 per_lang_eval_batch_size: 1
-per_lang_eval_max_batches: 8    # 検証を素早く終わらせるため絞る
-param_norm_every: 20
-tokens_per_sec_every: 5
+per_lang_eval_max_batches: 64
+param_norm_every: 1000
+tokens_per_sec_every: 100
 
-# ---- TrainingArguments ----
+# ---- TrainingArguments（設計書 §5）----
 training:
-  output_dir: artifacts-1/checkpoints/ranunculus-1b-ddp-test
+  output_dir: artifacts-1/checkpoints/ranunculus-1b-ddp
 
   # バッチ設定
-  # DDP 2GPU: per_device=4 × grad_accum=8 × 2GPU × seq=8192 = 524,288 tokens（本番と同一有効バッチ）
+  # DDP 2GPU: per_device=4 × grad_accum=8 × 2GPU × seq=8192 = 524,288 tokens（単一 GPU 版と同一有効バッチ）
   # VRAM 実測（forward+backward ピーク）:
   #   per_device=4 → 46.6GB/95GB (49%)  optimizer states込み推定 ~59GB (62%) ← 採用
   #   per_device=6 → 68.9GB/95GB (73%)  tok/s は per_device=4 と同等のため効果なし
@@ -64,7 +69,7 @@ training:
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 8
 
-  # 最適化（本番と同一）
+  # 最適化
   learning_rate: 3.0e-4
   adam_beta1: 0.9
   adam_beta2: 0.95
@@ -72,37 +77,42 @@ training:
   weight_decay: 0.1
   max_grad_norm: 1.0
 
-  # スケジューラ
+  # スケジューラ（設計書 §5）
   lr_scheduler_type: cosine_with_min_lr
-  warmup_steps: 10
+  warmup_steps: 2000
   lr_scheduler_kwargs:
-    min_lr_rate: 0.1
+    min_lr_rate: 0.1   # min_lr = peak × 0.1 = 3e-5
 
-  # 訓練長（単一 GPU 版と同一: 524,288 tokens/step × 40,500 steps ≈ 21.2B tokens）
+  # 訓練長（設計書 §5: 21.2B tokens / 524K tokens/step ≈ 40,500 steps）
   max_steps: 40500
 
   # 精度
   bf16: true
   bf16_full_eval: true
 
-  # チェックポイント不要
-  save_strategy: "no"
+  # チェックポイント（設計書 §11）
+  save_strategy: steps
+  save_steps: 2000
+  save_total_limit: 21
 
-  # ロギング
+  # ロギング（設計書 §10）
   logging_strategy: steps
-  logging_steps: 5
-  report_to: none
+  logging_steps: 10
+  report_to: wandb   # wandb 未使用の場合は none に変更
 
+  # 評価（PerLanguageEvalCallback が担うため本体の eval は無効化）
   eval_strategy: "no"
 
-  # NCCL が cu129 + Blackwell でクラッシュするため gloo にフォールバック
+  # DDP バックエンド（NCCL が cu129 + Blackwell で SIGSEGV のため gloo を使用）
   ddp_backend: gloo
 
+  # 再現性
   seed: 42
   data_seed: 42
 
-  dataloader_num_workers: 2
+  # I/O
+  dataloader_num_workers: 4
   dataloader_pin_memory: true
 
-# ---- 最終モデル保存先 ----
-final_dir: artifacts-1/models/ranunculus-1b-ddp-test
+# ---- 最終モデル保存先（設計書 §11）----
+final_dir: artifacts-1/models/ranunculus-1b-ddp
