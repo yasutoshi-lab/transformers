@@ -62,7 +62,7 @@ tokens_per_sec_every: 100
 
 # ---- TrainingArguments（設計書 §5）----
 training:
-  output_dir: ./checkpoints/ranunculus-1b   # 要変更: チェックポイント保存先
+  output_dir: artifacts/checkpoints/ranunculus-1b   # 要変更: チェックポイント保存先
 
   # バッチ設定（有効バッチ = 4 × 16 × 8192 = 524,288 tokens ≈ 0.5M）
   per_device_train_batch_size: 4
@@ -111,4 +111,4 @@ training:
   dataloader_pin_memory: true
 
 # ---- 最終モデル保存先（設計書 §11）----
-final_dir: ./models/ranunculus-1b-final   # 要変更: 最終モデル保存先
+final_dir: artifacts/models/ranunculus-1b-latest   # 要変更: 最終モデル保存先
