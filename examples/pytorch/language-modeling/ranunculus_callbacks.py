@@ -112,7 +112,8 @@ class TokensPerSecCallback(TrainerCallback):
         # Each optimizer step sees micro_bs * grad_accum sequences of length seq_len.
         seq_len = getattr(kwargs.get("train_dataloader"), "dataset", None)
         seq_len = getattr(seq_len, "seq_len", None) or args.max_seq_length or 8192
-        tokens = args.per_device_train_batch_size * args.gradient_accumulation_steps * seq_len
+        # world_size を掛けて全 GPU 合計のトークン数にする（DDP では per-device カウントになるため）
+        tokens = args.per_device_train_batch_size * args.gradient_accumulation_steps * seq_len * args.world_size
         self._window_tokens += tokens
 
         if self._window_start is None:

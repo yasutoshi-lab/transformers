@@ -14,9 +14,13 @@
 # limitations under the License.
 """Ranunculus-1B pretraining entrypoint (design §5 + §10 + §11).
 
-Usage:
+Usage (single GPU):
 
     CUDA_VISIBLE_DEVICES=0 python run_ranunculus_pretrain.py --config configs/ranunculus-1b.yaml
+
+Usage (DDP 2 GPU):
+
+    torchrun --nproc_per_node=2 run_ranunculus_pretrain.py --config configs/ranunculus-1b.yaml
 
 The YAML file holds everything: model hyperparameters, packed .bin paths per
 language, and the `TrainingArguments` dict. Only the PT stage is covered here.
@@ -89,7 +93,10 @@ def main() -> None:
     parser.add_argument("--gpu", type=str, default=None, help="CUDA_VISIBLE_DEVICES override (e.g. '0')")
     cli_args = parser.parse_args()
 
-    if cli_args.gpu is not None:
+    # torchrun が LOCAL_RANK を設定している場合は DDP モード。
+    # CUDA_VISIBLE_DEVICES を上書きすると torchrun のデバイス割り当てが壊れるため skip する。
+    is_ddp = "LOCAL_RANK" in os.environ
+    if cli_args.gpu is not None and not is_ddp:
         os.environ["CUDA_VISIBLE_DEVICES"] = cli_args.gpu
 
     cfg = load_yaml(cli_args.config)
