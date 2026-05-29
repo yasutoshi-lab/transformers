@@ -183,3 +183,7 @@ test-results/
 # AI agent local setup artifacts
 /.agents/skills
 /.claude/skills
+
+
+# custom ignore directory
+examples/pytorch/language-modeling/artifacts/
