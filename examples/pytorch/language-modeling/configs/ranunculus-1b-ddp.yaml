@@ -57,6 +57,10 @@ training:
 
   # バッチ設定
   # DDP 2GPU: per_device=4 × grad_accum=8 × 2GPU × seq=8192 = 524,288 tokens（本番と同一有効バッチ）
+  # VRAM 実測（forward+backward ピーク）:
+  #   per_device=4 → 46.6GB/95GB (49%)  optimizer states込み推定 ~59GB (62%) ← 採用
+  #   per_device=6 → 68.9GB/95GB (73%)  tok/s は per_device=4 と同等のため効果なし
+  #   per_device=8 → OOM
   per_device_train_batch_size: 4
   gradient_accumulation_steps: 8
 
