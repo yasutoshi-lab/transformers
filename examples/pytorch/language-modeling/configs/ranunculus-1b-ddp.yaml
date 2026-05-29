@@ -78,8 +78,8 @@ training:
   lr_scheduler_kwargs:
     min_lr_rate: 0.1
 
-  # 検証用: 30 ステップのみ実行
-  max_steps: 30
+  # 訓練長（単一 GPU 版と同一: 524,288 tokens/step × 40,500 steps ≈ 21.2B tokens）
+  max_steps: 40500
 
   # 精度
   bf16: true
