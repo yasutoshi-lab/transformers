@@ -123,6 +123,10 @@ training:
   logging_steps: 10
   report_to: wandb
   eval_strategy: "no"
+  # torch.compile 済みモデルの forward シグネチャは (*args, **kwargs) になるため、
+  # 既定の remove_unused_columns=True が input_ids/labels を「未使用」として除去し
+  # collator が空バッチを受ける（2026-09-26 M4 で再現）
+  remove_unused_columns: false
   # NCCL が cu129 + Blackwell で SIGSEGV（Ranunculus 本番の教訓）
   ddp_backend: gloo
   seed: 42
