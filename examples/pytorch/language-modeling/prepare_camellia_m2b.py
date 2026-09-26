@@ -22,7 +22,7 @@ Pipeline per domain (idempotent — re-running skips finished work):
   2. sample:  write {domain}_samples.txt (1000 evenly spaced docs) for the
               design sec.4 quality gate (目視確認 before packing).
   3. pack:    tokenize with the 128K tokenizer (M2a output), append the eos
-              token (U+FF20) per document — same convention as
+              token (<|endoftext|>) per document — same convention as
               prepare_ranunculus_data.py — and write fixed 8192-token uint32
               frames, truncated to the per-domain token budget. Tokenization
               runs in bounded-memory sequential passes (2GB raw each) so a
@@ -388,7 +388,7 @@ def main() -> None:
         from transformers import AutoTokenizer
         tok = AutoTokenizer.from_pretrained(str(args.tokenizer_dir))
         _ENC = lambda t: tok.encode(t, add_special_tokens=False)  # noqa: E731
-        _EOS = np.uint32(tok.convert_tokens_to_ids("￠"))
+        _EOS = np.uint32(tok.eos_token_id)  # M2a 128K: eos =  (id 127744)
         args.out_dir.mkdir(parents=True, exist_ok=True)
         grand = 0
         for d in args.domains:
