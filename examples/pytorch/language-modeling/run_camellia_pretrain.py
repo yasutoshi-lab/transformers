@@ -87,8 +87,10 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(cfg["tokenizer_dir"])
 
     model_cfg = CamelliaConfig(**cfg["model"])
-    # Packed intra-document boundary marker (design §7 実装前確定事項 1)
-    model_cfg.eos_token_id = tokenizer.convert_tokens_to_ids("\x08")
+    # Packed intra-document boundary marker (design §7 実装前確定事項 1):
+    # the tokenizer's EOS token. Packing inserts it between documents, and
+    # the Trainer aligns model.config to the tokenizer's value at startup.
+    model_cfg.eos_token_id = tokenizer.eos_token_id
     if cfg.get("attn_implementation"):
         model_cfg._attn_implementation = cfg["attn_implementation"]
     model = CamelliaForCausalLM(model_cfg).to(torch.bfloat16)

@@ -178,6 +178,7 @@ def compute_cu_seqlens(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tens
     if input_ids.shape[0] * input_ids.shape[1] == 0:
         return None
     B, T = input_ids.shape
+    S = B * T
     positions = torch.nonzero(input_ids == eos_token_id, as_tuple=False)
     if positions.numel() == 0:
         return None
@@ -186,18 +187,29 @@ def compute_cu_seqlens(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tens
     # drop zero-length segments (consecutive boundaries)
     keep = flat[1:] > flat[:-1]
     flat = torch.cat([flat[:1], flat[1:][keep]])
-    cu = torch.cat([torch.zeros(1, dtype=torch.long, device=input_ids.device), flat.to(torch.long)])
-    return cu
+    # A frame may end mid-document (packing cuts at arbitrary token offsets);
+    # the trailing partial document becomes its own segment so `cu_seqlens`
+    # always covers the full stream (contract of the fla varlen kernels).
+    if int(flat[-1]) < S:
+        flat = torch.cat([flat, torch.tensor([S], dtype=torch.long, device=flat.device)])
+    return torch.cat([torch.zeros(1, dtype=torch.long, device=input_ids.device), flat.to(torch.long)])
 
 
-def _adjust_cu_seqlens(cu_seqlens: torch.Tensor | None, new_len: int) -> torch.Tensor | None:
-    """Clamp / extend a packed `cu_seqlens` to a different (smaller) stream length."""
+def _adjust_cu_seqlens(cu_seqlens: torch.Tensor | None, B: int, T: int) -> torch.Tensor | None:
+    """Map packed `cu_seqlens` from the B*T stream to the MTP B*(T-1) stream.
+
+    The MTP stream drops each batch row's last position, so a boundary at
+    flat position p in batch b = p // T moves to p - b (the row end of the
+    full stream, p = B*T, maps to B*(T-1)). Zero-length segments (a
+    1-token document ending exactly at a row end) are dropped.
+    """
     if cu_seqlens is None:
         return None
-    cu = cu_seqlens[cu_seqlens <= new_len]
-    if cu.numel() == 0 or cu[-1].item() != new_len:
-        cu = torch.cat([cu, torch.tensor([new_len], dtype=torch.long, device=cu_seqlens.device)])
-    return cu
+    rest = cu_seqlens[1:]
+    shifted = rest - rest // T
+    cu = torch.cat([cu_seqlens[:1], shifted])
+    keep = cu[1:] > cu[:-1]
+    return torch.cat([cu[:1], cu[1:][keep]])
 
 
 class CamelliaKDAAttention(nn.Module):
@@ -341,21 +353,29 @@ class CamelliaMLAAttention(nn.Module):
                     softmax_scale=self.scaling, causal=True,
                 )
                 o = o.view(B, T, self.num_heads, self.v_head_dim)
-            else:  # SDPA fallback with a block-diagonal document mask
-                cu = cu_seqlens
-                seg = cu[1:] - cu[:-1]
-                attn = torch.zeros((S, S), dtype=torch.bool, device=hidden_states.device)
+            else:  # SDPA fallback: per-document causal attention.
+                # Documents are contiguous segments of the flattened stream,
+                # so a block-diagonal mask is equivalent to causal attention
+                # per segment. (A 2-D bool [S, S] mask is mishandled by SDPA
+                # on torch 2.11 / sm_120 — verified 2026-09-26.)
+                qf = q.reshape(S, self.num_heads, self.qk_nope_head_dim)
+                kf = k.reshape(S, self.num_heads, self.qk_nope_head_dim)
+                vf = v.reshape(S, self.num_heads, self.v_head_dim)
+                out_parts = []
                 start = 0
-                for length in seg.tolist():
-                    attn[start : start + length, start : start + length] = True
-                    start += length
-                qf = q.view(1, S, self.num_heads, self.qk_nope_head_dim)
-                kf = k.view(1, S, self.num_heads, self.qk_nope_head_dim)
-                vf = v.view(1, S, self.num_heads, self.v_head_dim)
-                o = F.scaled_dot_product_attention(
-                    qf, kf, vf, attn_mask=attn, scale=self.scaling,
-                )
-                o = o.view(B, T, self.num_heads, self.v_head_dim)
+                for length in (cu_seqlens[1:] - cu_seqlens[:-1]).tolist():
+                    end = start + length
+                    out_parts.append(
+                        F.scaled_dot_product_attention(
+                            qf[start:end].transpose(0, 1),
+                            kf[start:end].transpose(0, 1),
+                            vf[start:end].transpose(0, 1),
+                            is_causal=True,
+                            scale=self.scaling,
+                        ).transpose(0, 1)
+                    )
+                    start = end
+                o = torch.cat(out_parts, dim=0).view(B, T, self.num_heads, self.v_head_dim)
         else:
             qh = q.transpose(1, 2)
             kh = k.transpose(1, 2)
@@ -687,17 +707,22 @@ class CamelliaForCausalLM(DeepseekV3ForCausalLM):
         loss = None
         mtp_loss = None
         if labels is not None and self.mtp is not None and input_ids is not None:
-            T = input_ids.shape[1]
+            B, T = input_ids.shape[0], input_ids.shape[1]
             cu_seqlens = compute_cu_seqlens(input_ids, self.config.eos_token_id) if self.config.eos_token_id is not None else None
             next_embeds = self.model.embed_tokens(torch.roll(input_ids, shifts=-1, dims=1))
             combined = torch.cat([next_embeds[:, :-1], hidden_states[:, :-1]], dim=-1)  # [B, T-1, 2D]
-            mtp_cu = _adjust_cu_seqlens(cu_seqlens, T - 1)
+            mtp_cu = _adjust_cu_seqlens(cu_seqlens, B, T)
             mtp_hidden = self.mtp(combined, cu_seqlens=mtp_cu)
             mtp_logits = self.lm_head(self.model.norm(mtp_hidden))
+            # labels = input_ids (unshifted, PackedDataset convention).
+            # NTP: logits[t] predicts x_{t+1} -> pair logits[:T-1] with labels[1:].
+            # MTP: mtp_logits[t] predicts x_{t+2} -> pair mtp_logits[:T-2] with labels[2:]
+            # (the last MTP position has no in-sequence target x_T).
+            mtp_logits = mtp_logits[:, :-1]
             shift_logits = mtp_logits.contiguous().view(-1, self.config.vocab_size)
             shift_labels = labels[:, 2:].contiguous().view(-1)
             mtp_loss = F.cross_entropy(shift_logits, shift_labels, ignore_index=-100)
-            ntp_logits = logits.contiguous().view(-1, self.config.vocab_size)
+            ntp_logits = logits[:, :-1].contiguous().view(-1, self.config.vocab_size)
             ntp_labels = labels[:, 1:].contiguous().view(-1)
             loss = F.cross_entropy(ntp_logits, ntp_labels, ignore_index=-100) + self.mtp_lambda * mtp_loss
         elif labels is not None:
