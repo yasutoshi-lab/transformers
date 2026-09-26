@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from .cohere_asr import *
     from .colmodernvbert import *
     from .colpali import *
+    from .camellia import *
     from .colqwen2 import *
     from .conditional_detr import *
     from .convbert import *

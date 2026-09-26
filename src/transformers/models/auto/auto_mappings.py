@@ -99,6 +99,7 @@ CONFIG_MAPPING_NAMES = OrderedDict(
         ("cohere_asr", "CohereAsrConfig"),
         ("colmodernvbert", "ColModernVBertConfig"),
         ("colpali", "ColPaliConfig"),
+        ("camellia", "CamelliaConfig"),
         ("colqwen2", "ColQwen2Config"),
         ("conditional_detr", "ConditionalDetrConfig"),
         ("convbert", "ConvBertConfig"),

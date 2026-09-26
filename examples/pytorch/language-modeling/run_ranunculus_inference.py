@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 import torch
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -35,9 +36,7 @@ DEFAULT_REPO_ID = "yasutoshi-lab/Ranunculus-v1-1B"
 def load_model(args):
     if args.from_hub:
         print(f"[Hub] {args.repo_id} をロード中...")
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.repo_id, trust_remote_code=True, token=True
-        )
+        tokenizer = AutoTokenizer.from_pretrained(args.repo_id, trust_remote_code=True, token=True)
         model = AutoModelForCausalLM.from_pretrained(
             args.repo_id,
             trust_remote_code=True,
@@ -47,9 +46,7 @@ def load_model(args):
     else:
         print(f"[Local] {args.model_dir} をロード中...")
         tokenizer = AutoTokenizer.from_pretrained(str(args.model_dir))
-        model = AutoModelForCausalLM.from_pretrained(
-            str(args.model_dir), dtype=torch.bfloat16
-        )
+        model = AutoModelForCausalLM.from_pretrained(str(args.model_dir), dtype=torch.bfloat16)
 
     # 訓練設定の use_cache=False を推論用に上書き
     model.config.use_cache = True
