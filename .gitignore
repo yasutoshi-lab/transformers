@@ -187,3 +187,6 @@ test-results/
 
 # custom ignore directory
 examples/pytorch/language-modeling/artifact*/
+
+# Camellia: local wandb runs (language-modeling cwd)
+examples/pytorch/language-modeling/wandb/
