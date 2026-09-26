@@ -348,7 +348,7 @@ class CamelliaMLAAttention(nn.Module):
                 vf = v.reshape(S, self.num_heads, self.v_head_dim)
                 o = flash_attn_varlen_func(
                     qf, kf, vf,
-                    cu_seqlens=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                    cu_seqlens_q=cu_seqlens.to(torch.int32), cu_seqlens_k=cu_seqlens.to(torch.int32),
                     max_seqlen_q=max_len, max_seqlen_k=max_len,
                     softmax_scale=self.scaling, causal=True,
                 )

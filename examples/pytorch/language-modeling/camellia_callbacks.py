@@ -289,8 +289,10 @@ class TokensPerSecMfuCallback(TrainerCallback):
 
     def __init__(self, every: int = 100, n_active: float = 0.76e9, peak_tflops_per_gpu: float = 250.0):
         self.every = every
-        self.n_active = n_active
-        self.peak_tflops_per_gpu = peak_tflops_per_gpu
+        # YAML float pitfall: unsigned-exponent scalars (3.0e7) parse as str
+        # under PyYAML (YAML 1.1) — cast defensively.
+        self.n_active = float(n_active)
+        self.peak_tflops_per_gpu = float(peak_tflops_per_gpu)
         self._t0: float | None = None
         self._tokens = 0
 

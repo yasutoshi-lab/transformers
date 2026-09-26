@@ -90,7 +90,7 @@ moe:
   monitor_every: 100
 
 mfu:
-  n_active: 0.76e9
+  n_active: 0.76e+9
   peak_tflops_per_gpu: 250.0
 
 # ---- Optimizer（設計書 §5）----
