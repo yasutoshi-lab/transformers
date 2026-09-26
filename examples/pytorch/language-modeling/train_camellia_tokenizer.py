@@ -103,8 +103,8 @@ SOURCES: dict[str, list[tuple[str, str | None, int, str | None]]] = {
         ("HuggingFaceFW/fineweb-2", "kor_Hang", 0.8 * GB, None),
     ],
     "code": [
-        ("bigcode/starcoderdata", None, 0.3 * GB, "Python"),
-        ("bigcode/starcoderdata", None, 0.3 * GB, "Markdown"),
+        ("bigcode/starcoderdata", "python/train-*.parquet", 0.3 * GB, None),
+        ("bigcode/starcoderdata", "markdown/train-*.parquet", 0.3 * GB, None),
     ],
 }
 
@@ -134,6 +134,12 @@ def build_tokenizer() -> Tokenizer:
 
 def _stream(dataset: str, config: str | None, language: str | None):
     if config is not None:
+        # config に "/" が含まれる場合 = parquet の data_files glob
+        # （starcoderdata はこの datasets バージョンで per-language builder config
+        #  を持たないため、リポジトリ配下の <lang>/train-*.parquet を直接ストリーム。
+        #  全言語フィルタ方式より高速）
+        if "/" in config:
+            return load_dataset(dataset, data_files={"train": config}, split="train", streaming=True)
         return load_dataset(dataset, config, split="train", streaming=True)
     return load_dataset(dataset, split="train", streaming=True)
 
@@ -154,7 +160,7 @@ def dump_source(dataset: str, config: str | None, out_path: Path, max_bytes: int
             for row in ds:
                 if language is not None and row.get("language") != language:
                     continue
-                text = row.get("text", "")
+                text = row.get("text") or row.get("content") or ""  # starcoderdata は content 列
                 if not text:
                     continue
                 line = text.replace("\n", " ") + "\n"
