@@ -46,6 +46,11 @@ model:
   attention_bias: false
   attention_dropout: 0.0
   use_cache: false
+  # experts の eager パス: 自前 Python ループの NaiveMoe forward が
+  # per-expert 出力 RMS 統計（設計 §6）を持つ。grouped_mm（デフォルト）だと
+  # ディスパッチされて統計が死ぬ。実機ベンチ（2026-09-26・Blackwell）では
+  # eager ≈ grouped_mm（6.06 vs 6.01 ms/MLP）で差なし。
+  experts_implementation: eager
   num_nextn_predict_layers: 1
   mtp_lambda_high: 0.3
   mtp_lambda_low: 0.1

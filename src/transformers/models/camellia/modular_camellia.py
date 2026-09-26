@@ -645,6 +645,15 @@ class CamelliaModel(DeepseekV3Model):
         if input_ids is not None and self.config.eos_token_id is not None:
             cu_seqlens = compute_cu_seqlens(input_ids, self.config.eos_token_id)
 
+        # Re-link the MoE stat views on every forward: `module.to()` replaces
+        # the registered buffer objects, so the init-time aliases
+        # (layer.mlp._load_stats / experts._out_*_stats) can go stale
+        # (wrong device/dtype) after dtype conversion or device moves.
+        for i, layer in enumerate(self.moe_layers):
+            layer.mlp._load_stats = self.moe_load_stats[i]
+            layer.mlp.experts._out_norm_stats = self.moe_out_norm_stats[i]
+            layer.mlp.experts._out_hit_stats = self.moe_out_hit_stats[i]
+
         hidden_states = inputs_embeds
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(hidden_states, cu_seqlens=cu_seqlens, **kwargs)
@@ -662,7 +671,13 @@ class CamelliaForCausalLM(DeepseekV3ForCausalLM):
 
     `loss = L_ntp + mtp_lambda * L_mtp` where `mtp_lambda` is a mutable
     attribute (set by the training loop from the config schedule).
+
+    Custom loss (sum of two mean CEs), so the Trainer must not pass
+    `num_items_in_batch` — it divides by grad-accum instead (same idiom as
+    Gemma3ForConditionalGeneration, HF issue #40564).
     """
+
+    accepts_loss_kwargs = False
 
     def __init__(self, config: CamelliaConfig):
         super().__init__(config)

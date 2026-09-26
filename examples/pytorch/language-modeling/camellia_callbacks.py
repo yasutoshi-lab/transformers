@@ -71,9 +71,14 @@ class MoEBiasAndMonitorCallback(TrainerCallback):
         # DDP / accelerator wrappers expose the raw model
         while hasattr(model, "module"):
             model = model.module
-        if not hasattr(model, "moe_layers"):
-            return None
-        return model
+        # moe_layers and the stat buffers live on the inner base model
+        # (CamelliaModel), not on the ForCausalLM wrapper.
+        candidate = getattr(model, "model", None)
+        if candidate is not None and hasattr(candidate, "moe_layers"):
+            return candidate
+        if hasattr(model, "moe_layers"):
+            return model
+        return None
 
     def on_step_end(self, args, state, control, **kwargs):
         model = self._moe_model(kwargs)
@@ -83,7 +88,8 @@ class MoEBiasAndMonitorCallback(TrainerCallback):
         # --- global whole-batch counts for this optimizer step ---
         counts = model.moe_load_stats.detach().clone()  # [L, E] local
         _all_reduce_sum(counts)
-        total_tokens = counts.sum().clamp_min(1.0)
+        # per-layer total routed tokens ([L]); every layer sees the same batch
+        total_tokens = counts.sum(dim=-1).clamp_min(1.0)
 
         # --- sign-based bias update (V3 aux-loss-free) ---
         with torch.no_grad():

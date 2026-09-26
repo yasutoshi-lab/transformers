@@ -949,6 +949,15 @@ class CamelliaModel(CamelliaPreTrainedModel):
         if input_ids is not None and self.config.eos_token_id is not None:
             cu_seqlens = compute_cu_seqlens(input_ids, self.config.eos_token_id)
 
+        # Re-link the MoE stat views on every forward: `module.to()` replaces
+        # the registered buffer objects, so the init-time aliases
+        # (layer.mlp._load_stats / experts._out_*_stats) can go stale
+        # (wrong device/dtype) after dtype conversion or device moves.
+        for i, layer in enumerate(self.moe_layers):
+            layer.mlp._load_stats = self.moe_load_stats[i]
+            layer.mlp.experts._out_norm_stats = self.moe_out_norm_stats[i]
+            layer.mlp.experts._out_hit_stats = self.moe_out_hit_stats[i]
+
         hidden_states = inputs_embeds
         for decoder_layer in self.layers[: self.config.num_hidden_layers]:
             hidden_states = decoder_layer(hidden_states, cu_seqlens=cu_seqlens, **kwargs)
@@ -993,6 +1002,12 @@ class CamelliaForCausalLM(CamelliaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     _tp_plan = {"lm_head": "colwise_gather_output"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
+    # Custom NTP + MTP loss: the Trainer would otherwise pass
+    # `num_items_in_batch` (because forward has **kwargs) and expect the model
+    # to divide the loss by it. Our lambda-weighted sum of two mean CEs is a
+    # per-microbatch scalar, so let the Trainer divide by grad-accum instead
+    # (same idiom as Gemma3ForConditionalGeneration, HF issue #40564).
+    accepts_loss_kwargs = False
 
     def __init__(self, config: CamelliaConfig):
         super().__init__(config)

@@ -100,7 +100,9 @@ def main() -> None:
         if "A_log" in name or "dt_bias" in name:
             p.data = p.data.float()
     for name, b in model.named_buffers():
-        if "e_score_correction_bias" in name:
+        if "e_score_correction_bias" in name or name.endswith(
+            ("moe_load_stats", "moe_out_norm_stats", "moe_out_hit_stats")
+        ):
             b.data = b.data.float()
     if cfg.get("gradient_checkpointing", True):
         model.gradient_checkpointing_enable()
