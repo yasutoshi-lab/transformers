@@ -83,6 +83,12 @@ def upload_run(api: HfApi, run_dir: Path, owner: str) -> str:
             api.upload_file(repo_id=repo, path_or_fileobj=str(run_dir / extra), path_in_repo=extra,
                             commit_message=f"Add {extra}")
     api.upload_file(repo_id=repo, path_or_fileobj=str(readme), path_in_repo="README.md", commit_message="Add model card")
+    # a probe's quick evaluation also describes the pretrained model it started from: copy it to the parent repo
+    parent = run_dir.parent / run_dir.name.removesuffix("-probe")
+    if run_dir.name.endswith("-probe") and (run_dir / "jmteb_lite.json").exists() and (parent / "UPLOADED").exists():
+        api.upload_file(repo_id=f"{owner}/{parent.name}", path_or_fileobj=str(run_dir / "jmteb_lite.json"),
+                        path_in_repo="jmteb_lite_after_probe.json",
+                        commit_message=f"Add JMTEB-lite result of {run_dir.name} (short contrastive probe)")
     return repo
 
 
