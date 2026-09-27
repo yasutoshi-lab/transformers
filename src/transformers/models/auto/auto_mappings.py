@@ -185,6 +185,7 @@ CONFIG_MAPPING_NAMES = OrderedDict(
         ("florence_vision", "Florence2VisionConfig"),
         ("fnet", "FNetConfig"),
         ("focalnet", "FocalNetConfig"),
+        ("freesia", "FreesiaConfig"),
         ("fsmt", "FSMTConfig"),
         ("funnel", "FunnelConfig"),
         ("fuyu", "FuyuConfig"),

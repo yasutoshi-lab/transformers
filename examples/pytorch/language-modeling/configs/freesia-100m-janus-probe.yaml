@@ -1,0 +1,28 @@
+# Stage 1a probe: short contrastive training on top of the janus-pretrained 100M (design §5/§6).
+init_from: artifacts/runs/freesia-100m-janus/final
+tokenizer: artifacts/tokenizer/v32k
+output_dir: artifacts/runs/freesia-100m-janus-probe
+init_embed_mode_from: masked
+bloom_override: learned        # lm/janus: learned gates, masked: fully open (never trained causally)
+floor_max: 0.3
+floor_warmup_ratio: 0.2
+bloom_lr_mult: 100.0
+ja_queries: 125000
+en_queries: 125000
+max_rows_per_source: 200000
+batch_queries: 512
+k_neg: 7
+max_query_len: 128
+max_doc_len: 256
+chunk: 256
+temperature: 0.05
+false_neg_margin: 0.1
+focal_gamma: 0.5
+lr: 5.0e-5
+warmup_ratio: 0.05
+weight_decay: 0.01
+epochs: 1
+seed: 42
+log_every: 10
+save_minutes: 30
+gradient_checkpointing: true

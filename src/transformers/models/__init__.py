@@ -145,6 +145,7 @@ if TYPE_CHECKING:
     from .florence2 import *
     from .fnet import *
     from .focalnet import *
+    from .freesia import *
     from .fsmt import *
     from .funnel import *
     from .fuyu import *
