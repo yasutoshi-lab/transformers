@@ -6,7 +6,7 @@ init_embed_mode_from: masked
 bloom_override: open        # lm/janus: learned gates, masked: fully open (never trained causally)
 floor_max: 0.3
 floor_warmup_ratio: 0.2
-bloom_lr_mult: 100.0
+bloom_lr_mult: 200.0
 ja_queries: 125000
 en_queries: 125000
 max_rows_per_source: 200000

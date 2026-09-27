@@ -302,9 +302,11 @@ def main() -> None:
 
         if step % cfg.get("log_every", 10) == 0:
             gates = model.bloom_gates().detach().cpu()
+            eff = model.bloom_gates(effective=True).detach().cpu()
             rec = {"step": step, "loss": loss.item(), "src": src["name"], "lr": lr, "grad_norm": float(gnorm),
                    "bloom_floor": model.bloom_floor, "gate_mean": float(gates.mean()),
                    "gate_by_layer": [round(float(x), 4) for x in gates.mean(1)],
+                   "eff_gate_by_layer": [round(float(x), 4) for x in eff.mean(1)],
                    "sec_per_step": (time.time() - t0) / cfg.get("log_every", 10), "mem_gb": torch.cuda.max_memory_allocated() / 1e9}
             print(json.dumps(rec, ensure_ascii=False), flush=True)
             log.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -326,7 +328,8 @@ def main() -> None:
     tok.save_pretrained(final)
     (final / "freesia_embed_meta.json").write_text(json.dumps(
         {"bloom_override": model.bloom_override, "bloom_floor": model.bloom_floor,
-         "bloom_gates": model.bloom_gates().tolist(), "config": cfg}, ensure_ascii=False, indent=2))
+         "bloom_gates": model.bloom_gates().tolist(),
+         "bloom_gates_effective": model.bloom_gates(effective=True).tolist(), "config": cfg}, ensure_ascii=False, indent=2))
     (out / "DONE").write_text(json.dumps({"step": step}))
     print("TRAINING_FINISHED", flush=True)
 

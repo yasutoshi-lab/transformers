@@ -146,3 +146,15 @@ def test_from_pretrained_directly_on_model_class():
         ref = model.model(ids, mode=MODE_LM).last_hidden_state
         torch.testing.assert_close(enc(ids, mode=MODE_LM).last_hidden_state, ref)
         torch.testing.assert_close(again.model(ids, mode=MODE_LM).last_hidden_state, ref)
+
+
+def test_learned_gate_gets_gradient_even_when_floor_dominates():
+    model = FreesiaModel(tiny_config(bloom_gate_init=-8.0)).train()
+    model.bloom_override = BLOOM_LEARNED
+    model.bloom_floor = 0.9  # floor far above sigmoid(-8)
+    ids = torch.randint(2, 128, (2, 10))
+    model.encode(ids, torch.ones_like(ids)).sum().backward()
+    grad = model.layers[1].self_attn.bloom_logit.grad
+    assert grad is not None and torch.any(grad != 0)
+    eff = model.bloom_gates(effective=True)
+    assert torch.all(eff >= 0.9 - 1e-6)

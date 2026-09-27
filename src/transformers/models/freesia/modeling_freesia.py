@@ -109,8 +109,11 @@ class FreesiaAttention(nn.Module):
         floor_log = math.log(max(floor, self.config.bloom_min_gate))
         device = self.bloom_logit.device
         if override == BLOOM_LEARNED:
-            log_g = F.logsigmoid(self.bloom_logit.float())
-            bias = torch.maximum(log_g, torch.full_like(log_g, floor_log)).clamp(min=min_log)
+            # effective gate = floor + (1 - floor) * sigmoid(logit): the schedule floor sets a minimum opening,
+            # and the learned part always receives gradient (a hard max() would cut it once the floor wins).
+            floor_c = min(max(floor, 0.0), 1.0)
+            g_eff = floor_c + (1.0 - floor_c) * torch.sigmoid(self.bloom_logit.float())
+            bias = torch.log(g_eff.clamp(min=self.config.bloom_min_gate))
         elif override == BLOOM_FLOOR_ONLY:
             bias = torch.full((self.num_heads,), floor_log, device=device)
         elif override == BLOOM_OPEN:
@@ -280,13 +283,21 @@ class FreesiaModel(FreesiaPreTrainedModel):
     def set_input_embeddings(self, value):
         self.embed_tokens = value
 
-    def bloom_gates(self) -> torch.Tensor:
+    def bloom_gates(self, effective: bool = False) -> torch.Tensor:
         """Return all Bloom gate values.
+
+        Args:
+            effective (bool): If True, return the gates actually applied in the learned mode, i.e.
+                `floor + (1 - floor) * g` with the current `bloom_floor`.
 
         Returns:
             torch.Tensor: `(num_layers, num_heads)` gate values in [0, 1].
         """
-        return torch.stack([layer.self_attn.bloom_gate() for layer in self.layers])
+        gates = torch.stack([layer.self_attn.bloom_gate() for layer in self.layers])
+        if effective:
+            floor = min(max(float(self.bloom_floor), 0.0), 1.0)
+            gates = floor + (1.0 - floor) * gates
+        return gates
 
     def forward(
         self,
