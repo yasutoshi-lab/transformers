@@ -345,9 +345,25 @@ class FreesiaModel(FreesiaPreTrainedModel):
 
         Returns:
             torch.Tensor: `(batch, hidden)` float32 embeddings.
+
+        Raises:
+            ValueError: If `config.pooling_mode` is unknown.
         """
         hidden = self.forward(input_ids, attention_mask, mode=MODE_EMBED).last_hidden_state
-        return self.petal_pooling(hidden, attention_mask if pool_mask is None else pool_mask)
+        mask = attention_mask if pool_mask is None else pool_mask
+        pooling = getattr(self.config, "pooling_mode", "petal")
+        if pooling == "petal":
+            return self.petal_pooling(hidden, mask)
+        if pooling == "mean":
+            m = mask.to(hidden.dtype).unsqueeze(-1)
+            pooled = (hidden * m).sum(1) / m.sum(1).clamp(min=1.0)
+        elif pooling == "last":
+            positions = torch.arange(mask.size(1), device=mask.device).expand_as(mask)
+            last = torch.where(mask.bool(), positions, torch.full_like(positions, -1)).max(dim=1).values.clamp(min=0)
+            pooled = hidden[torch.arange(hidden.size(0), device=hidden.device), last]
+        else:
+            raise ValueError(f"unknown pooling_mode: {pooling}")
+        return F.normalize(self.petal_pooling.norm(pooled).float(), dim=-1)
 
 
 class FreesiaForPreTraining(FreesiaPreTrainedModel):

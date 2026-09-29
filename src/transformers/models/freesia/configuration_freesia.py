@@ -41,6 +41,9 @@ class FreesiaConfig(PreTrainedConfig):
         Number of mode embeddings. 0 = causal LM, 1 = masked (MNTP) prediction, 2 = embedding.
     petal_count (`int`, *optional*, defaults to 8):
         Number of learned petal queries used by Petal Pooling.
+    pooling_mode (`str`, *optional*, defaults to "petal"):
+        Pooling used by `FreesiaModel.encode`: "petal" (Petal Pooling), "mean" (masked mean + RMSNorm) or
+        "last" (last pooled token + RMSNorm). "mean" / "last" are ablations (design §6, stage 1b).
     mask_token_id (`int`, *optional*):
         Id of the `<mask>` token used by the masked (MNTP) prediction mode.
 
@@ -72,6 +75,7 @@ class FreesiaConfig(PreTrainedConfig):
     bloom_min_gate: float = 1e-4
     num_modes: int = 3
     petal_count: int = 8
+    pooling_mode: str = "petal"
     use_cache: bool = False
     pad_token_id: int | None = None
     bos_token_id: int | None = None

@@ -242,6 +242,7 @@ def main() -> None:
         with torch.no_grad():
             model.mode_embed.weight[MODE_EMBED] = model.mode_embed.weight[src_mode]
     model.bloom_override = cfg.get("bloom_override", "learned")
+    model.config.pooling_mode = cfg.get("pooling_mode", "petal")
     model.cuda().train()
     if cfg.get("gradient_checkpointing", True):
         model.gradient_checkpointing_enable()

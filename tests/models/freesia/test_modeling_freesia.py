@@ -158,3 +158,17 @@ def test_learned_gate_gets_gradient_even_when_floor_dominates():
     assert grad is not None and torch.any(grad != 0)
     eff = model.bloom_gates(effective=True)
     assert torch.all(eff >= 0.9 - 1e-6)
+
+
+def test_pooling_modes_mean_and_last():
+    model = _model()
+    ids = torch.randint(2, 128, (2, 10))
+    mask = torch.ones_like(ids)
+    mask[1, 7:] = 0
+    petal = model.encode(ids, mask)  # petal starts equal to mean pooling
+    model.config.pooling_mode = "mean"
+    torch.testing.assert_close(model.encode(ids, mask), petal, atol=1e-5, rtol=1e-5)
+    model.config.pooling_mode = "last"
+    hidden = model(ids, mask, mode=MODE_EMBED).last_hidden_state
+    expected = F.normalize(model.petal_pooling.norm(torch.stack([hidden[0, 9], hidden[1, 6]])).float(), dim=-1)
+    torch.testing.assert_close(model.encode(ids, mask), expected, atol=1e-5, rtol=1e-5)
