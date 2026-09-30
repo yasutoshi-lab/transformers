@@ -78,6 +78,32 @@ def _as_list(v):
     return [v] if v else []
 
 
+def _shrink(text: str, negs: list, cfg: dict) -> tuple:
+    """Cap text length and the negative pool to keep large runs within the host RAM (ws2-arc: 61GiB)."""
+    max_chars = cfg.get("max_chars")
+    pool = cfg.get("max_neg_pool")
+    negs = negs[:pool] if pool else negs
+    if max_chars:
+        return text[:max_chars], [n[:max_chars] for n in negs]
+    return text, negs
+
+
+def start_memory_guard(min_available_gb: float) -> None:
+    """Abort this process before the host runs out of memory (other services share the RAM)."""
+    import threading
+
+    def _watch():
+        while True:
+            with open("/proc/meminfo") as f:
+                avail = next(int(x.split()[1]) for x in f if x.startswith("MemAvailable")) / 1024**2
+            if avail < min_available_gb:
+                print(f"[memory-guard] MemAvailable={avail:.1f}GiB < {min_available_gb}GiB, aborting", flush=True)
+                os._exit(3)
+            time.sleep(2)
+
+    threading.Thread(target=_watch, daemon=True).start()
+
+
 def load_sources(cfg: dict, rng: random.Random) -> list[dict]:
     """Load (query, positive, negatives) triples per data source.
 
@@ -99,14 +125,21 @@ def load_sources(cfg: dict, rng: random.Random) -> list[dict]:
         rows = []
         for p in sorted(ja_files[name]):
             t = pq.read_table(p, columns=["anc", "pos", "neg"]).to_pylist()
-            rows += [(r["anc"], r["pos"], _as_list(r["neg"])) for r in t if r["anc"] and r["pos"]]
+            for r in t:
+                if r["anc"] and r["pos"]:
+                    pos, negs = _shrink(r["pos"], _as_list(r["neg"]), cfg)
+                    rows.append((r["anc"], pos, negs))
         kind = "nli" if name == "nli" else "retrieval"
         sources.append({"name": f"ja/{name}", "kind": kind, "lang": "ja", "inbatch": kind == "retrieval", "rows": rows})
     # English: codefuse-ai/F2LLM (query / passage / negative_1..n)
-    for path in sorted(glob.glob(os.path.join(HF_HUB, "datasets--codefuse-ai--F2LLM/snapshots/*/*.parquet"))):
+    en_paths = [p for p in sorted(glob.glob(os.path.join(HF_HUB, "datasets--codefuse-ai--F2LLM/snapshots/*/*.parquet")))
+                if not cfg.get("en_sources") or Path(p).stem in cfg["en_sources"]]
+    cap_all = cfg.get("max_rows_per_source", 200_000)
+    en_total = sum(min(pq.ParquetFile(p).metadata.num_rows, cap_all) for p in en_paths)
+    # keep each row with probability p while reading, so large runs never hold the full corpus in RAM
+    keep_p = min(1.0, cfg["en_queries"] / en_total) if cfg.get("en_queries") and en_total else 1.0
+    for path in en_paths:
         name = Path(path).stem
-        if cfg.get("en_sources") and name not in cfg["en_sources"]:
-            continue
         kind = next((k for k, v in F2LLM_TYPES.items() if name in v), "retrieval")
         pf = pq.ParquetFile(path)
         cols = [c for c in pf.schema_arrow.names if c == "query" or c == "passage" or c.startswith("negative_")]
@@ -114,10 +147,13 @@ def load_sources(cfg: dict, rng: random.Random) -> list[dict]:
         rows = []
         for batch in pf.iter_batches(batch_size=4096, columns=cols):
             for r in batch.to_pylist():
+                if keep_p < 1.0 and rng.random() >= keep_p:
+                    continue
                 negs = [r[c] for c in cols if c.startswith("negative_") and r[c]]
                 if r["query"] and r["passage"]:
-                    rows.append((r["query"], r["passage"], negs))
-            if len(rows) >= cap:
+                    pos, negs = _shrink(r["passage"], negs, cfg)
+                    rows.append((r["query"], pos, negs))
+            if len(rows) >= cap * keep_p:
                 break
         sources.append({"name": f"en/{name}", "kind": kind, "lang": "en", "inbatch": kind == "retrieval", "rows": rows})
 
@@ -229,6 +265,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     cfg = yaml.safe_load(parser.parse_args().config.read_text())
+    start_memory_guard(cfg.get("min_available_gb", 8.0))
     out = Path(cfg["output_dir"])
     out.mkdir(parents=True, exist_ok=True)
     torch.set_float32_matmul_precision("high")
@@ -241,6 +278,9 @@ def main() -> None:
         src_mode = {"masked": MODE_MASKED, "lm": MODE_LM}[cfg.get("init_embed_mode_from", "masked")]
         with torch.no_grad():
             model.mode_embed.weight[MODE_EMBED] = model.mode_embed.weight[src_mode]
+            if cfg.get("bloom_logit_init") is not None:  # re-initialize the (never trained) gates
+                for layer in model.layers:
+                    layer.self_attn.bloom_logit.fill_(float(cfg["bloom_logit_init"]))
     model.bloom_override = cfg.get("bloom_override", "learned")
     model.config.pooling_mode = cfg.get("pooling_mode", "petal")
     model.cuda().train()
