@@ -1,0 +1,33 @@
+# Freesia-300M stage 2 (design §6): causal-LM pretraining only (stage 1 result: LM objective is best).
+objective: lm
+mask_rate: 0.2
+seed: 42
+tokenizer: artifacts/tokenizer/v32k
+output_dir: artifacts/runs/freesia-300m-lm
+train_files:
+  ja: artifacts/packed/ja_train.bin
+  en: artifacts/packed/en_train.bin
+val_files:
+  ja: artifacts/packed/ja_val.bin
+  en: artifacts/packed/en_val.bin
+model:
+  hidden_size: 768
+  num_hidden_layers: 28
+  num_attention_heads: 12
+  head_dim: 64
+  intermediate_size: 3072
+  max_position_embeddings: 1024
+seq_len: 1024
+micro_batch_size: 8
+grad_accum: 64          # 8 x 64 x 1024 = 524,288 tokens / step
+max_steps: 11444        # ~6.0B tokens (3B ja + 3B en, no repetition)
+warmup_steps: 500
+lr: 3.0e-4
+min_lr: 3.0e-5
+weight_decay: 0.1
+max_grad_norm: 1.0
+log_every: 10
+eval_every: 500
+eval_batches: 8
+save_minutes: 30
+gradient_checkpointing: false
