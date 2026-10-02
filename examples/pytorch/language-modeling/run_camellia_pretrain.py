@@ -44,7 +44,7 @@ from camellia_callbacks import (
 )
 from camellia_muon import build_camellia_optimizer
 from packed_dataset import PackedDataset
-from transformers import AutoTokenizer, CamelliaConfig, CamelliaForCausalLM, Trainer, TrainingArguments
+from transformers import AutoTokenizer, CamelliaConfig, CamelliaForCausalLM, Trainer, TrainerCallback, TrainingArguments
 
 
 class CamelliaTrainer(Trainer):
@@ -64,6 +64,20 @@ class CamelliaTrainer(Trainer):
             epsilon=muon_cfg.get("adam_epsilon", 1.0e-8),
         )
         return self.optimizer
+
+
+class SyncSaveStepsCallback(TrainerCallback):
+    """Resume 時に args.save_steps を state へ反映する。
+
+    Trainer は resume 時に trainer_state.json で state を上書きするため、config の
+    save_steps を変更しても checkpoint 保存時の値のまま保存間隔が固定される。
+    学習開始時に args の値で上書きし、config 変更を有効にする。
+    """
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        if args.save_steps and state.save_steps != args.save_steps:
+            print(f"[save_steps] state {state.save_steps} -> args {args.save_steps}", flush=True)
+            state.save_steps = args.save_steps
 
 
 def load_yaml(path: Path) -> dict:
@@ -127,6 +141,7 @@ def main() -> None:
         train_dataset=train_ds,
         processing_class=tokenizer,
         callbacks=[
+            SyncSaveStepsCallback(),
             MoEBiasAndMonitorCallback(
                 bias_update_speed=cfg.get("moe", {}).get("bias_update_speed", 0.001),
                 monitor_every=cfg.get("moe", {}).get("monitor_every", 100),
