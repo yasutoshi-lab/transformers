@@ -80,6 +80,42 @@ class SyncSaveStepsCallback(TrainerCallback):
             state.save_steps = args.save_steps
 
 
+class SyncPeakLrCallback(TrainerCallback):
+    """Resume 時に config のピーク LR を optimizer / scheduler へ反映する。
+
+    resume では optimizer.pt / scheduler.pt から param_group の lr・initial_lr と
+    scheduler の base_lrs が復元されるため、config の muon_lr / adamw_lr を変えても
+    保存時のピーク LR のまま学習が続く。学習開始時に base_lrs を config の値へ置き換え、
+    現在 step の scheduler 係数を掛けた lr を param_group に設定し直す。
+
+    Args:
+        muon_lr: Muon グループ（use_muon=True）のピーク LR。
+        adamw_lr: AdamW グループ（use_muon=False）のピーク LR。
+    """
+
+    def __init__(self, muon_lr: float, adamw_lr: float):
+        self.muon_lr = muon_lr
+        self.adamw_lr = adamw_lr
+
+    def on_train_begin(self, args, state, control, optimizer=None, lr_scheduler=None, **kwargs):
+        if optimizer is None or lr_scheduler is None or not hasattr(lr_scheduler, "base_lrs"):
+            return
+        groups = optimizer.param_groups
+        lambdas = getattr(lr_scheduler, "lr_lambdas", None)
+        for i, group in enumerate(groups):
+            target = self.muon_lr if group.get("use_muon") else self.adamw_lr
+            if abs(lr_scheduler.base_lrs[i] - target) < 1e-12:
+                continue
+            old = lr_scheduler.base_lrs[i]
+            lr_scheduler.base_lrs[i] = target
+            group["initial_lr"] = target
+            factor = lambdas[i](lr_scheduler.last_epoch) if lambdas else group["lr"] / old
+            group["lr"] = target * factor
+            if i == 0 or group.get("use_muon") != groups[i - 1].get("use_muon"):
+                print(f"[peak_lr] group {i} use_muon={group.get("use_muon")}: base {old} -> {target}, lr now {group["lr"]:.6g}", flush=True)
+        lr_scheduler._last_lr = [g["lr"] for g in groups]
+
+
 def load_yaml(path: Path) -> dict:
     with Path(path).open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -142,6 +178,10 @@ def main() -> None:
         processing_class=tokenizer,
         callbacks=[
             SyncSaveStepsCallback(),
+            SyncPeakLrCallback(
+                muon_lr=cfg.get("muon", {}).get("muon_lr", 0.02),
+                adamw_lr=cfg.get("muon", {}).get("adamw_lr", 3.0e-4),
+            ),
             MoEBiasAndMonitorCallback(
                 bias_update_speed=cfg.get("moe", {}).get("bias_update_speed", 0.001),
                 monitor_every=cfg.get("moe", {}).get("monitor_every", 100),
