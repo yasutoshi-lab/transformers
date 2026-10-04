@@ -10,6 +10,12 @@ conditions are measured with the same yardstick (no answer parsing).
                  - acc_norm : 合計を選択肢の文字数で割った値が最大のものを回答とする
     jmmlu        JMMLU（56 科目・0-shot）。「答え:」の直後に続く " A"〜" D" の対数確率で回答を決める
                  （一般知識の忘却を測る。工学系 / 数学系 / その他の 3 グループでも集計）
+    jmmlu_cloze  JMMLU を自作 4 択と同じ cloze 方式で測る。記号（A〜D）ではなく、"問題: …\n答え: " に続く
+                 各選択肢の本文の対数確率（文字数で正規化した acc_norm も）で回答を決める。
+                 SFT で「記号を 1 つ答える」形式が崩れた影響を、知識の忘却と切り分けるために使う
+    mmlu_pro     MMLU-Pro（英語・最大 10 択・14 分野・12,032 問）。同じ分野の validation 問題 5 問を
+                 例示に置き（5-shot）、"Answer:" の直後の " A"〜" J" の対数確率で回答を決める。
+                 公式リーダーボード（5-shot CoT・生成）とは方式が異なり、値は直接比較できない
 
 モデルの指定:
     --adapters に LoRA adapter を順に並べると、その順にベースへ merge してから評価する
@@ -47,6 +53,10 @@ MCQ_TEMPLATE = "問題: {question}\n答え: "
 JMMLU_DIR = ROOT / "artifacts" / "bench" / "JMMLU" / "test"
 JMMLU_TEMPLATE = "{question}\nA. {A}\nB. {B}\nC. {C}\nD. {D}\n答え:"
 JMMLU_LETTERS = [" A", " B", " C", " D"]
+MMLU_PRO_REPO = "TIGER-Lab/MMLU-Pro"
+MMLU_PRO_REVISION = "b189ec765aa7ed75c8acfea42df31fdae71f97be"
+MMLU_PRO_LETTERS = "ABCDEFGHIJ"
+MMLU_PRO_HEADER = "The following are multiple choice questions (with answers) about {category}.\n\n"
 JMMLU_GROUPS = {
     "engineering": {"electrical_engineering", "college_physics", "high_school_physics", "conceptual_physics",
                     "college_chemistry", "high_school_chemistry", "college_computer_science",
@@ -233,6 +243,106 @@ def jmmlu_accuracy(model, tokenizer):
     }
 
 
+def jmmlu_cloze_accuracy(model, tokenizer):
+    """JMMLU を cloze 方式（選択肢本文の対数確率）で評価する.
+
+    Args:
+        model (PreTrainedModel): 評価対象。
+        tokenizer (PreTrainedTokenizerBase): トークナイザ。
+
+    Returns:
+        dict: ``n`` / ``acc`` / ``acc_norm`` / ``by_group``（各 acc / acc_norm）/ ``predictions``。
+
+    Raises:
+        FileNotFoundError: JMMLU が ``artifacts/bench`` に展開されていない場合。
+    """
+    files = sorted(JMMLU_DIR.glob("*.csv"))
+    if not files:
+        raise FileNotFoundError(f"JMMLU が見つかりません: {JMMLU_DIR}")
+    by_group, preds, hits, hits_norm = {}, [], 0, 0
+    for path in files:
+        group = jmmlu_group(path.stem)
+        with open(path, encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        for i, r in enumerate(rows):
+            choices = [r[k] for k in "ABCD"]
+            lps = choice_logprobs(model, tokenizer, MCQ_TEMPLATE.format(question=r["question"]), choices)
+            norm = [lp / max(1, len(c)) for lp, c in zip(lps, choices)]
+            ans = "ABCD".index(r["answer"].strip())
+            pred, pred_norm = max(range(4), key=lps.__getitem__), max(range(4), key=norm.__getitem__)
+            c = by_group.setdefault(group, [0, 0, 0])
+            c[0] += pred == ans
+            c[1] += pred_norm == ans
+            c[2] += 1
+            hits += pred == ans
+            hits_norm += pred_norm == ans
+            preds.append({"subject": path.stem, "index": i, "answer": ans, "pred": pred, "pred_norm": pred_norm})
+    n = len(preds)
+    return {"n": n, "acc": hits / n, "acc_norm": hits_norm / n,
+            "by_group": {k: {"acc": v[0] / v[2], "acc_norm": v[1] / v[2], "n": v[2]} for k, v in by_group.items()},
+            "predictions": preds}
+
+
+def format_mmlu_pro(row, with_answer):
+    """MMLU-Pro の 1 問を "Question / Options / Answer:" 形式の文字列にする.
+
+    Args:
+        row (dict): ``question`` / ``options`` / ``answer`` を持つ問題。
+        with_answer (bool): 例示用に正解の記号まで含めるか。
+
+    Returns:
+        str: 整形済みの問題文。
+    """
+    opts = "\n".join(f"{MMLU_PRO_LETTERS[i]}. {o}" for i, o in enumerate(row["options"]))
+    text = f"Question: {row['question']}\nOptions:\n{opts}\nAnswer:"
+    return text + (f" {row['answer']}\n\n" if with_answer else "")
+
+
+def mmlu_pro_accuracy(model, tokenizer, shots=5, limit=0):
+    """MMLU-Pro の正解率を全体・分野別に計算する（尤度方式・同分野 few-shot）.
+
+    Args:
+        model (PreTrainedModel): 評価対象。
+        tokenizer (PreTrainedTokenizerBase): トークナイザ。
+        shots (int): 例示に使う同分野の validation 問題数。
+        limit (int): 先頭 N 問だけ評価（0 = 全問）。
+
+    Returns:
+        dict: ``n`` / ``acc`` / ``by_category`` / ``predictions`` / ``revision``。
+    """
+    from datasets import load_dataset
+
+    ds = load_dataset(MMLU_PRO_REPO, revision=MMLU_PRO_REVISION)
+    fewshot = {}
+    for r in ds["validation"]:
+        fewshot.setdefault(r["category"], []).append(r)
+    rows = ds["test"].to_list()
+    if limit:
+        rows = rows[:limit]
+    by_cat, preds = {}, []
+    for r in rows:
+        prefix = MMLU_PRO_HEADER.format(category=r["category"]) + "".join(
+            format_mmlu_pro(x, True) for x in fewshot.get(r["category"], [])[:shots])
+        letters = [" " + MMLU_PRO_LETTERS[i] for i in range(len(r["options"]))]
+        lps = choice_logprobs(model, tokenizer, prefix + format_mmlu_pro(r, False), letters)
+        pred = MMLU_PRO_LETTERS[max(range(len(lps)), key=lps.__getitem__)]
+        hit = pred == r["answer"]
+        c = by_cat.setdefault(r["category"], [0, 0])
+        c[0] += hit
+        c[1] += 1
+        preds.append({"question_id": r["question_id"], "category": r["category"], "answer": r["answer"], "pred": pred,
+                      "n_options": len(r["options"])})
+    n = sum(v[1] for v in by_cat.values())
+    return {
+        "n": n,
+        "acc": sum(v[0] for v in by_cat.values()) / n,
+        "by_category": {k: {"acc": v[0] / v[1], "n": v[1]} for k, v in sorted(by_cat.items())},
+        "shots": shots,
+        "revision": MMLU_PRO_REVISION,
+        "predictions": preds,
+    }
+
+
 def main():
     """モデルを読み込み、指定した指標を計算して JSON に保存する.
 
@@ -249,6 +359,9 @@ def main():
     ap.add_argument("--skip-mcq", action="store_true")
     ap.add_argument("--mcq-limit", type=int, default=0)
     ap.add_argument("--jmmlu", action="store_true", help="JMMLU も評価する（数分かかる）")
+    ap.add_argument("--jmmlu-cloze", action="store_true", help="JMMLU を cloze 方式でも評価する")
+    ap.add_argument("--mmlu-pro", action="store_true", help="MMLU-Pro も評価する（同分野 5-shot・尤度方式）")
+    ap.add_argument("--mmlu-pro-limit", type=int, default=0)
     args = ap.parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
@@ -266,6 +379,12 @@ def main():
     if args.jmmlu:
         result["jmmlu"] = jmmlu_accuracy(model, tokenizer)
         print("jmmlu", {k: result["jmmlu"][k] for k in ("n", "acc", "by_group")}, flush=True)
+    if args.jmmlu_cloze:
+        result["jmmlu_cloze"] = jmmlu_cloze_accuracy(model, tokenizer)
+        print("jmmlu_cloze", {k: result["jmmlu_cloze"][k] for k in ("n", "acc", "acc_norm", "by_group")}, flush=True)
+    if args.mmlu_pro:
+        result["mmlu_pro"] = mmlu_pro_accuracy(model, tokenizer, limit=args.mmlu_pro_limit)
+        print("mmlu_pro", {k: result["mmlu_pro"][k] for k in ("n", "acc", "by_category")}, flush=True)
     result["eval_seconds"] = time.time() - t0
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=1))
