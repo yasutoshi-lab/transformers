@@ -8,6 +8,8 @@ conditions are measured with the same yardstick (no answer parsing).
     mcq          4 択 QA（cloze 形式）。各選択肢の対数確率で回答を決める（知識獲得）
                  - acc      : 選択肢トークンの対数確率の合計が最大のものを回答とする
                  - acc_norm : 合計を選択肢の文字数で割った値が最大のものを回答とする
+    jmmlu        JMMLU（56 科目・0-shot）。「答え:」の直後に続く " A"〜" D" の対数確率で回答を決める
+                 （一般知識の忘却を測る。工学系 / 数学系 / その他の 3 グループでも集計）
 
 モデルの指定:
     --adapters に LoRA adapter を順に並べると、その順にベースへ merge してから評価する
@@ -25,6 +27,7 @@ import os
 os.environ.setdefault("TORCH_DISABLE_NATIVE_JIT", "1")
 
 import argparse
+import csv
 import json
 import math
 import time
@@ -41,6 +44,16 @@ DATA_DIR = ROOT / "artifacts" / "data"
 QA_DIR = ROOT / "artifacts" / "qa"
 BASE_MODEL = "google/gemma-4-E4B"
 MCQ_TEMPLATE = "問題: {question}\n答え: "
+JMMLU_DIR = ROOT / "artifacts" / "bench" / "JMMLU" / "test"
+JMMLU_TEMPLATE = "{question}\nA. {A}\nB. {B}\nC. {C}\nD. {D}\n答え:"
+JMMLU_LETTERS = [" A", " B", " C", " D"]
+JMMLU_GROUPS = {
+    "engineering": {"electrical_engineering", "college_physics", "high_school_physics", "conceptual_physics",
+                    "college_chemistry", "high_school_chemistry", "college_computer_science",
+                    "high_school_computer_science", "computer_security"},
+    "math": {"college_mathematics", "high_school_mathematics", "elementary_mathematics",
+             "high_school_statistics", "abstract_algebra", "econometrics"},
+}
 
 
 def load_model(base_model, adapters):
@@ -165,6 +178,61 @@ def mcq_accuracy(model, tokenizer, limit=0):
     }
 
 
+def jmmlu_group(subject):
+    """JMMLU の科目名を集計グループに振り分ける.
+
+    Args:
+        subject (str): 科目名（CSV のファイル名）。
+
+    Returns:
+        str: ``engineering`` / ``math`` / ``other``。
+    """
+    for group, subjects in JMMLU_GROUPS.items():
+        if subject in subjects:
+            return group
+    return "other"
+
+
+def jmmlu_accuracy(model, tokenizer):
+    """JMMLU の正解率を全体・グループ別・科目別に計算する.
+
+    Args:
+        model (PreTrainedModel): 評価対象。
+        tokenizer (PreTrainedTokenizerBase): トークナイザ。
+
+    Returns:
+        dict: ``n`` / ``acc`` / ``by_group`` / ``by_subject`` / ``predictions``。
+
+    Raises:
+        FileNotFoundError: JMMLU が ``artifacts/bench`` に展開されていない場合。
+    """
+    files = sorted(JMMLU_DIR.glob("*.csv"))
+    if not files:
+        raise FileNotFoundError(f"JMMLU が見つかりません: {JMMLU_DIR}")
+    by_subject, by_group, preds = {}, {}, []
+    for path in files:
+        subject, group = path.stem, jmmlu_group(path.stem)
+        with open(path, encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        for i, r in enumerate(rows):
+            lps = choice_logprobs(model, tokenizer, JMMLU_TEMPLATE.format(**r), JMMLU_LETTERS)
+            pred = "ABCD"[max(range(4), key=lps.__getitem__)]
+            hit = pred == r["answer"].strip()
+            for key, table in ((subject, by_subject), (group, by_group)):
+                c = table.setdefault(key, [0, 0])
+                c[0] += hit
+                c[1] += 1
+            preds.append({"subject": subject, "index": i, "answer": r["answer"].strip(), "pred": pred})
+    n = sum(v[1] for v in by_subject.values())
+    return {
+        "n": n,
+        "acc": sum(v[0] for v in by_subject.values()) / n,
+        "by_group": {k: {"acc": v[0] / v[1], "n": v[1]} for k, v in by_group.items()},
+        "by_subject": {k: {"acc": v[0] / v[1], "n": v[1]} for k, v in by_subject.items()},
+        "predictions": preds,
+    }
+
+
 def main():
     """モデルを読み込み、指定した指標を計算して JSON に保存する.
 
@@ -180,6 +248,7 @@ def main():
     ap.add_argument("--skip-ppl", action="store_true")
     ap.add_argument("--skip-mcq", action="store_true")
     ap.add_argument("--mcq-limit", type=int, default=0)
+    ap.add_argument("--jmmlu", action="store_true", help="JMMLU も評価する（数分かかる）")
     args = ap.parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
@@ -194,6 +263,9 @@ def main():
     if not args.skip_mcq:
         result["mcq"] = mcq_accuracy(model, tokenizer, args.mcq_limit)
         print("mcq", {k: v for k, v in result["mcq"].items() if k != "predictions"}, flush=True)
+    if args.jmmlu:
+        result["jmmlu"] = jmmlu_accuracy(model, tokenizer)
+        print("jmmlu", {k: result["jmmlu"][k] for k in ("n", "acc", "by_group")}, flush=True)
     result["eval_seconds"] = time.time() - t0
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=1))

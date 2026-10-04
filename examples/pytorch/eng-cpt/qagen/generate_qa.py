@@ -109,6 +109,35 @@ def load_chunks(split):
     return out
 
 
+# LLM が JSON 文字列内の LaTeX のバックスラッシュをエスケープせずに書くと、"\frac" の "\f" などが
+# JSON の制御文字として解釈されて壊れる（例: "\frac" → 改ページ + "rac"）。パース後に復元する。
+LATEX_CONTROL_RESTORE = {"\x0c": "\\f", "\x08": "\\b", "\t": "\\t", "\r": "\\r"}
+RE_INLINE_MATH = re.compile(r"\$[^$]*\$")
+
+
+def fix_latex_escapes(value):
+    """JSON パースで制御文字化した LaTeX コマンドを復元する（dict / list は再帰的に処理）.
+
+    処理概要: 改ページ・バックスペース・タブ・復帰を ``\\f`` ``\\b`` ``\\t`` ``\\r`` に戻す。
+    改行は通常の文中改行と区別できないため、``$...$`` の中で英字が続く場合（``\\nu`` 等）だけ戻す。
+
+    Args:
+        value (str | dict | list | object): パース済みの値。
+
+    Returns:
+        str | dict | list | object: 復元後の値（文字列以外はそのまま）。
+    """
+    if isinstance(value, dict):
+        return {k: fix_latex_escapes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [fix_latex_escapes(v) for v in value]
+    if not isinstance(value, str):
+        return value
+    for ch, rep in LATEX_CONTROL_RESTORE.items():
+        value = value.replace(ch, rep)
+    return RE_INLINE_MATH.sub(lambda m: re.sub(r"\n(?=[A-Za-z])", r"\\n", m.group()), value)
+
+
 async def call_json(client, prompt, schema, temperature, max_tokens):
     """JSON スキーマ固定で 1 回生成し、パース済みの dict を返す.
 
@@ -134,7 +163,7 @@ async def call_json(client, prompt, schema, temperature, max_tokens):
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     usage = {"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens}
-    return json.loads(resp.choices[0].message.content), usage
+    return fix_latex_escapes(json.loads(resp.choices[0].message.content)), usage
 
 
 async def generate(client, task, chunks, raw_path, concurrency):
