@@ -1,0 +1,51 @@
+# eng-cpt-qagen-vllm @ ws3-arc — SFT / 評価用 QA 生成のための nvidia/Gemma-4-26B-A4B-NVFP4
+#
+# ホスト: RTX PRO 6000 Blackwell Max-Q 96GB ×2 / driver 575.51.03 (CUDA 12.9)
+#         マルチテナント機のため、コンテナ名・ポートは本検証専用の値に固定する。
+# GPU 割当（Curator 指定）: GPU0 = LoRA 学習 / GPU1 = この QA 生成サーバ
+#
+# 起動:  ssh ws3-arc 'cd ~/eng-cpt/qagen && docker compose -f docker-compose.ws3-arc.yml up -d --wait'
+# 停止:  ssh ws3-arc 'docker rm -f eng-cpt-qagen-vllm'
+# 接続:  ssh -N -L 18010:localhost:8010 ws3-arc  → http://localhost:18010/v1
+#
+# 起動設定は ws3 で NVFP4 + MTP の稼働実績がある VideoToManual の compose
+# (docker-compose-vllm-gemma4-26b-a4b-nvfp4.ws3.yml) を土台に、テキスト専用へ絞った。
+name: eng-cpt-qagen
+
+services:
+  vllm:
+    image: local/vllm-openai:vtm
+    container_name: eng-cpt-qagen-vllm   # 固定名（停止はこの名前のみを対象にする）
+    # Error 803 回避: イメージ同梱の CUDA forward-compat を無効化し host driver の libcuda を使う
+    entrypoint: ["/bin/bash", "-c", "rm -f /etc/ld.so.conf.d/*compat*.conf && ldconfig && exec vllm serve \"$@\"", "_"]
+    environment:
+      - TZ=Asia/Tokyo
+      - HF_HUB_OFFLINE=1                 # モデルは ws3 のキャッシュに取得済み
+    ports:
+      - "8010:8000"                      # 他ユーザーの vLLM が 8000〜8002 を使うことがあるため 8010
+    ipc: host
+    restart: "no"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    command:
+      - nvidia/Gemma-4-26B-A4B-NVFP4
+      - --served-model-name=qagen
+      - --gpu-memory-utilization=0.90    # GPU1 はこのサーバ専用
+      - --max-model-len=32768            # 入力チャンク（〜6k tokens）+ 出力に十分な長さ
+      - --max-num-seqs=64
+      - "--limit-mm-per-prompt={\"image\": 0, \"audio\": 0, \"video\": 0}"   # テキスト専用
+      - "--speculative-config={\"method\": \"mtp\", \"model\": \"google/gemma-4-26B-A4B-it-assistant\", \"num_speculative_tokens\": 4}"
+      - --reasoning-parser=gemma4
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/models', timeout=4)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 180
+      start_period: 120s
