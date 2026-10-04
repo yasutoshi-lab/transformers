@@ -39,12 +39,14 @@ evaluate() {
   "$PY" -m train.eval_lm --name "$name" --output "$EVAL/$name.json" --jmmlu "$@"
 }
 
-# エポックごとの checkpoint を順に評価する（checkpoint-<step> をステップ順に ep1, ep2, ...）
+# エポックごとの checkpoint を順に評価する（checkpoint-<step> をステップ数の昇順に ep1, ep2, ...）
+# 注意: パスに "-" を含む（cpt-f100 等）ので、区切り文字ではなく末尾の数字だけで数値ソートする
 evaluate_epochs() {
   local run=$1; shift
   local ep=0
-  for ckpt in $(ls -d "$RUNS/$run"/checkpoint-* | sort -t- -k2 -n); do
+  for ckpt in $(ls -d "$RUNS/$run"/checkpoint-* | sed -E 's/.*checkpoint-([0-9]+)$/\1 &/' | sort -n | cut -d' ' -f2); do
     ep=$((ep + 1))
+    log "map $run-ep$ep -> $ckpt"
     evaluate "$run-ep$ep" --adapters "$@" "$ckpt"
   done
 }
