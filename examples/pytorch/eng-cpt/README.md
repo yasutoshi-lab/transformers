@@ -12,6 +12,7 @@ SFT と組み合わせて学習前後の知識獲得・コストを測る検証�
 ```
 eng-cpt/
 ├── prepare_eng_cpt_data.py   # 前処理のエントリポイント（S1〜S6 を順に実行）
+├── upload_dataset_to_hub.py  # HF Hub の private データセットへアップロード
 ├── data_prep/                # 前処理ステージごとのモジュール
 │   ├── books.py              #   対象書籍 20 冊（mechanical / electrical / aeronautical）
 │   ├── glyphs.py             #   S1 文字正規化（NFKC・簡体字→日本字体・OCR 誤字補正）
@@ -34,13 +35,22 @@ eng-cpt/
 
 ```bash
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python opencc datasketch tokenizers huggingface_hub
+uv pip install --python .venv/bin/python opencc datasketch tokenizers huggingface_hub datasets
 
 cd examples/pytorch/eng-cpt
 ../../../.venv/bin/python prepare_eng_cpt_data.py            # 前処理
 ../../../.venv/bin/python -m tools.inspect_drops --reason toc  # 除去の目視確認
 ../../../.venv/bin/python -m tools.audit_glyphs --stage output # 字形の残存検査
 ../../../.venv/bin/python -m tools.book_stats --format md      # レポート用の表
+../../../.venv/bin/python upload_dataset_to_hub.py --repo-id yasutoshi-lab/eng-textbook-cpt-ja
+```
+
+Hub 上のデータセット: [`yasutoshi-lab/eng-textbook-cpt-ja`](https://huggingface.co/datasets/yasutoshi-lab/eng-textbook-cpt-ja)（**private**。
+push 前に private であることを確認し、public なら中断する。`drop_samples.jsonl` は送らない）
+
+```python
+from datasets import load_dataset
+ds = load_dataset("yasutoshi-lab/eng-textbook-cpt-ja")  # HF_TOKEN が必要
 ```
 
 `--raw-dir`（既定: Gaia の `raw/books`）、`--out-dir`、`--tokenizer`（既定: `google/gemma-4-E4B`）、
