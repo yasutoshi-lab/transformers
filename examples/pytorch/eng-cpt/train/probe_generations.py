@@ -2,11 +2,14 @@
 
 Probe free-form generations of the four main conditions on hand-picked samples.
 
-サンプル定義（JSON。著作物由来の文言を含むため artifacts/ 配下に置く）:
-    [{"sample_id": "T1", "domain": "工具", "aspect": "工具材料", "mcq_id": "mcq-0136",
-      "question": "<自由記述用に書き換えた質問>"}, ...]
+サンプル定義（JSON。著作物由来の文言を含むため artifacts/ 配下に置く）。2 形式に対応する:
+    4 択由来: {"sample_id", "domain", "aspect", "mcq_id", "question"}
+              正答・根拠文は ``artifacts/qa/mcq_eval.jsonl`` から引く
+    本文由来: {"sample_id", "domain", "aspect", "doc_id", "question",
+              "reference": {"answer": "<要点>", "evidence": "<本文の根拠文>"}, "sft_coverage": "<SFT に同じ事実があるか>"}
+              CPT の train データなど、4 択が無い範囲の知識を問う場合に使う。evidence が doc_id の本文に
+              含まれることを検証する
 
-各サンプルの元の 4 択（問題文・選択肢・正解・根拠文）は ``artifacts/qa/mcq_eval.jsonl`` から、
 出典ページはコーパスから引いて記録する。出力は 1 行 = 1 サンプル × 1 条件の JSONL。
 
 生成条件:
@@ -90,6 +93,38 @@ def generate(model, tokenizer, prompt, max_new_tokens, add_bos, eos_token_id):
     return {"output": text.strip(), "n_output_tokens": len(new), "finish_reason": reason}
 
 
+def resolve_sample(s, mcq, docs):
+    """サンプル定義から、正答・根拠文・出典情報を解決する.
+
+    Args:
+        s (dict): サンプル定義（4 択由来または本文由来）。
+        mcq (dict[str, dict]): 評価用 4 択（id→行）。
+        docs (dict[str, dict]): コーパス文書（id→行）。
+
+    Returns:
+        tuple[dict, dict]: ``(reference, source)``。
+
+    Raises:
+        KeyError: mcq_id / doc_id が存在しない場合。
+        ValueError: 本文由来サンプルの evidence が文書本文に含まれない場合。
+    """
+    if "mcq_id" in s:
+        m = mcq[s["mcq_id"]]
+        src = docs[m["source_id"]]
+        reference = {"correct_choice": m["choices"][m["answer"]], "evidence": m["evidence"]}
+        source = {"type": "mcq", "mcq_id": m["id"], "original_question": m["question"], "original_choices": m["choices"],
+                  "answer_index": m["answer"], "book": m["book"], "chunk_id": m["chunk_id"]}
+    else:
+        src = docs[s["doc_id"]]
+        if s["reference"]["evidence"] not in src["text"].replace("\n", " "):
+            raise ValueError(f"{s['sample_id']}: evidence が {s['doc_id']} の本文に見つかりません")
+        reference = {"correct_choice": s["reference"]["answer"], "evidence": s["reference"]["evidence"]}
+        source = {"type": "corpus", "doc_id": s["doc_id"], "book": src["book"], "sft_coverage": s.get("sft_coverage")}
+    source.update({"split": src["split"], "pages": src["pages"],
+                   "in_cpt_data": src["split"] in ("train", "qa_eval"), "in_sft_source_range": src["split"] == "train"})
+    return reference, source
+
+
 def main():
     """サンプルを 4 条件で生成し、JSONL と比較用 Markdown を書き出す.
 
@@ -124,8 +159,7 @@ def main():
         set_seed(args.seed)
         model = load_model(BASE_MODEL, [str(a) for a in adapters])
         for s in samples:
-            m = mcq[s["mcq_id"]]
-            src = docs[m["source_id"]]
+            reference, source = resolve_sample(s, mcq, docs)
             if chat:
                 prompt = tokenizer.apply_chat_template([{"role": "user", "content": s["question"]}], tokenize=False,
                                                        add_generation_prompt=True)
@@ -138,11 +172,8 @@ def main():
                 "input": {"question": s["question"], "prompt": prompt,
                           "prompt_format": "chat_template" if chat else "few-shot(3)"},
                 "output": gen["output"], "n_output_tokens": gen["n_output_tokens"], "finish_reason": gen["finish_reason"],
-                "reference": {"correct_choice": m["choices"][m["answer"]], "evidence": m["evidence"]},
-                "source": {"mcq_id": m["id"], "original_question": m["question"], "original_choices": m["choices"],
-                           "answer_index": m["answer"], "book": m["book"], "chunk_id": m["chunk_id"],
-                           "split": src["split"], "pages": src["pages"],
-                           "in_cpt_data": src["split"] in ("train", "qa_eval"), "in_sft_data": src["split"] == "train"},
+                "reference": reference,
+                "source": source,
                 "generation": {"seed": args.seed, "max_new_tokens": args.max_new_tokens, "do_sample": False,
                                "adapters": [str(a) for a in adapters]},
             })
