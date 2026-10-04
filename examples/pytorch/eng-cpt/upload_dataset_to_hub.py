@@ -1,10 +1,10 @@
-"""前処理済みコーパスを HF datasets 形式にして Hub の private リポジトリへアップロードする.
+"""前処理済みコーパス / SFT データを HF datasets 形式にして Hub の private リポジトリへアップロードする.
 
-Upload the preprocessed CPT corpus to a private Hugging Face dataset repository.
+Upload the preprocessed CPT corpus or the SFT QA set to a private Hugging Face dataset repository.
 
-``artifacts/data/{train,qa_eval,holdout_ppl}.jsonl`` を ``DatasetDict`` として読み込み、
-3 split の Parquet として push する。データセットカード（README.md）には
-本文を含まない数値（``stats.json`` の要約）とスキーマだけを書く。
+``--kind corpus``: ``artifacts/data/{train,qa_eval,holdout_ppl}.jsonl`` を 3 split で push する。
+``--kind sft``   : ``artifacts/qa/sft.jsonl`` を train split で push する。
+データセットカード（README.md）には本文を含まない数値とスキーマだけを書く。
 
 安全策:
     - push の前に private でリポジトリを作成し、private であることを確認してから送る。
@@ -12,7 +12,8 @@ Upload the preprocessed CPT corpus to a private Hugging Face dataset repository.
     - ``drop_samples.jsonl``（除去ページの本文抜粋）はアップロードしない。
 
 使い方（eng-cpt/ 直下で実行）:
-    python upload_dataset_to_hub.py --repo-id yasutoshi-lab/eng-textbook-cpt-ja
+    python upload_dataset_to_hub.py --kind corpus --repo-id yasutoshi-lab/eng-textbook-cpt-ja
+    python upload_dataset_to_hub.py --kind sft --repo-id yasutoshi-lab/eng-textbook-sft-ja
 """
 
 import argparse
@@ -27,6 +28,65 @@ from data_prep.corpus import SPLITS
 
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "artifacts" / "data"
+QA_DIR = Path(__file__).resolve().parent / "artifacts" / "qa"
+
+SFT_CARD_TEMPLATE = """---
+language:
+- ja
+pretty_name: 工学系教科書 SFT データ（日本語 QA）
+size_categories:
+- 1K<n<10K
+task_categories:
+- question-answering
+- text-generation
+tags:
+- sft
+- engineering
+- synthetic
+configs:
+- config_name: default
+  data_files:
+  - split: train
+    path: data/train-*
+---
+
+# eng-textbook-sft-ja
+
+[`yasutoshi-lab/eng-textbook-cpt-ja`](https://huggingface.co/datasets/yasutoshi-lab/eng-textbook-cpt-ja) の
+`train` split（工学系教科書 20 冊の本文）から、`nvidia/Gemma-4-26B-A4B-NVFP4` で生成した日本語の QA。
+`google/gemma-4-E4B` への CPT → SFT 検証の SFT 段階で使う。
+
+> **取り扱い注意**: 元の本文は市販書籍に由来し、QA はその内容に基づく。社内の研究目的に限って使い、
+> **このリポジトリを public にしない・外部へ再配布しない**こと。
+
+## 件数
+
+| 項目 | 値 |
+|---|---|
+| 件数 | {rows:,} |
+| カテゴリ | {categories} |
+| 生成元チャンク | {chunks:,}（約 1,500 字ずつ。1 チャンクあたり最大 4 組を生成） |
+| 生成件数 → 除去 | {raw:,} 組 → 参照表現 {drop_ref} 組・重複 {drop_dup} 組を除去 |
+| 生成トークン | 入力 {prompt_tokens:,} / 出力 {completion_tokens:,} |
+
+評価用 4 択（コーパスの `qa_eval` 範囲から生成）とは生成元の範囲が重ならない。
+
+## Schema
+
+| key | 型 | 内容 |
+|---|---|---|
+| `id` | string | `sft-<通し番号 5 桁>` |
+| `source_id` | string | 生成元文書の id（コーパスの `id`） |
+| `chunk_id` | string | 生成元チャンク（`<source_id>#<チャンク番号>`） |
+| `book` / `category` | string | 生成元の書籍名 / カテゴリ |
+| `messages` | list | `[{{"role": "user", ...}}, {{"role": "assistant", ...}}]` の 1 往復 |
+
+## 生成と後処理
+
+- 質問は抜粋を読んでいない人にも通じる形（「本文」「図3」などの参照を禁止）、回答は抜粋の内容のみで 2〜5 文
+- JSON スキーマ固定で生成。JSON 文字列内の未エスケープ LaTeX（`\\frac` が改ページ+`rac` になる等）は復元済み
+- 生成コード: `yasutoshi-lab/transformers` の `gemma4-eng-cpt` ブランチ `examples/pytorch/eng-cpt/qagen/`
+"""
 
 CARD_TEMPLATE = """---
 language:
@@ -136,6 +196,28 @@ def build_card(stats):
     )
 
 
+def build_sft_card(rows, qa_stats):
+    """SFT データと qa_stats.json からデータセットカードを作る.
+
+    Args:
+        rows (list[dict]): sft.jsonl の行。
+        qa_stats (dict): ``artifacts/qa/qa_stats.json`` の内容。
+
+    Returns:
+        str: データセットカード（YAML メタデータ付き Markdown）。
+    """
+    c = qa_stats["sft"]["counts"]
+    u = qa_stats["sft"]["usage"]
+    cats = {}
+    for r in rows:
+        cats[r["category"]] = cats.get(r["category"], 0) + 1
+    return SFT_CARD_TEMPLATE.format(
+        rows=len(rows), categories=" / ".join(f"{k} {v:,}" for k, v in cats.items()),
+        chunks=c["sft_chunks"], raw=c["sft_raw_items"], drop_ref=c.get("sft_drop_source_ref", 0),
+        drop_dup=c.get("sft_drop_dup", 0), prompt_tokens=u["prompt_tokens"], completion_tokens=u["completion_tokens"],
+    )
+
+
 def ensure_private_repo(api, repo_id):
     """データセットリポジトリを private で用意し、private であることを確認する.
 
@@ -162,18 +244,28 @@ def main():
         None
     """
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--kind", choices=["corpus", "sft"], default="corpus")
     ap.add_argument("--repo-id", required=True)
     ap.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     args = ap.parse_args()
 
-    stats = json.loads((args.data_dir / "stats.json").read_text())
-    ds = load_dataset("json", data_files={s: str(args.data_dir / f"{s}.jsonl") for s in SPLITS})
+    if args.kind == "corpus":
+        stats = json.loads((args.data_dir / "stats.json").read_text())
+        ds = load_dataset("json", data_files={s: str(args.data_dir / f"{s}.jsonl") for s in SPLITS})
+        card, message = build_card(stats), "前処理済みコーパスを追加"
+    else:
+        path = QA_DIR / "sft.jsonl"
+        with open(path) as f:
+            rows = [json.loads(line) for line in f]
+        ds = load_dataset("json", data_files={"train": str(path)})
+        card = build_sft_card(rows, json.loads((QA_DIR / "qa_stats.json").read_text()))
+        message = "SFT データを追加"
     print(ds)
 
     api = HfApi()
     ensure_private_repo(api, args.repo_id)
-    ds.push_to_hub(args.repo_id, private=True, commit_message="前処理済みコーパスを追加")
-    DatasetCard(build_card(stats)).push_to_hub(args.repo_id, repo_type="dataset", commit_message="データセットカードを追加")
+    ds.push_to_hub(args.repo_id, private=True, commit_message=message)
+    DatasetCard(card).push_to_hub(args.repo_id, repo_type="dataset", commit_message="データセットカードを追加")
     print(f"uploaded: https://huggingface.co/datasets/{args.repo_id} (private={api.dataset_info(args.repo_id).private})")
 
 

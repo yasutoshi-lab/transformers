@@ -42,10 +42,12 @@ cd examples/pytorch/eng-cpt
 ../../../.venv/bin/python -m tools.inspect_drops --reason toc  # 除去の目視確認
 ../../../.venv/bin/python -m tools.audit_glyphs --stage output # 字形の残存検査
 ../../../.venv/bin/python -m tools.book_stats --format md      # レポート用の表
-../../../.venv/bin/python upload_dataset_to_hub.py --repo-id yasutoshi-lab/eng-textbook-cpt-ja
+../../../.venv/bin/python upload_dataset_to_hub.py --kind corpus --repo-id yasutoshi-lab/eng-textbook-cpt-ja
+../../../.venv/bin/python upload_dataset_to_hub.py --kind sft --repo-id yasutoshi-lab/eng-textbook-sft-ja
 ```
 
-Hub 上のデータセット: [`yasutoshi-lab/eng-textbook-cpt-ja`](https://huggingface.co/datasets/yasutoshi-lab/eng-textbook-cpt-ja)（**private**。
+Hub 上のデータセット（いずれも **private**）: [`yasutoshi-lab/eng-textbook-cpt-ja`](https://huggingface.co/datasets/yasutoshi-lab/eng-textbook-cpt-ja)（前処理コーパス）、[`yasutoshi-lab/eng-textbook-sft-ja`](https://huggingface.co/datasets/yasutoshi-lab/eng-textbook-sft-ja)（SFT 用 QA 6,591 件）。
+（
 push 前に private であることを確認し、public なら中断する。`drop_samples.jsonl` は送らない）
 
 ```python
