@@ -32,6 +32,7 @@ from openai import AsyncOpenAI
 
 from qagen.generate_qa import (
     OUT_DIR,
+    TASKS,
     SHUFFLE_SEED,
     _norm,
     call_json,
@@ -166,7 +167,7 @@ async def run(args):
     path = OUT_DIR / "mcq_eval.jsonl"
     with open(OUT_DIR / "mcq_eval_v1.jsonl") as f:
         rows = [json.loads(line) for line in f]
-    chunk_text = {c["chunk_id"]: c["text"] for c in load_chunks("qa_eval")}
+    chunk_text = {c["chunk_id"]: c["text"] for c in load_chunks(TASKS["mcq"]["split"])}
     client = None if args.postprocess_only else AsyncOpenAI(base_url=args.base_url, api_key="EMPTY", timeout=600)
     stats = collections.Counter(input=len(rows))
     sem = asyncio.Semaphore(args.concurrency)

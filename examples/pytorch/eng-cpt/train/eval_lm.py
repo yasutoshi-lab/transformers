@@ -180,18 +180,19 @@ def next_token_logprobs(model, tokenizer, prompt, candidates):
     return [logp[c[0]].item() for c in cand_ids]
 
 
-def mcq_accuracy(model, tokenizer, limit=0):
+def mcq_accuracy(model, tokenizer, limit=0, path=None):
     """4 択 QA の正解率（acc / acc_norm）をカテゴリ別にも計算する.
 
     Args:
         model (PreTrainedModel): 評価対象。
         tokenizer (PreTrainedTokenizerBase): トークナイザ。
         limit (int): 先頭 N 問だけ評価（0 = 全問）。
+        path (str | pathlib.Path | None): 問題ファイル（``None`` なら ``artifacts/qa/mcq_eval.jsonl``）。
 
     Returns:
         dict: ``n`` / ``acc`` / ``acc_norm`` / ``by_category`` / ``predictions``。
     """
-    with open(QA_DIR / "mcq_eval.jsonl") as f:
+    with open(path or QA_DIR / "mcq_eval.jsonl") as f:
         rows = [json.loads(line) for line in f]
     if limit:
         rows = rows[:limit]
@@ -389,6 +390,7 @@ def main():
     ap.add_argument("--skip-ppl", action="store_true")
     ap.add_argument("--skip-mcq", action="store_true")
     ap.add_argument("--mcq-limit", type=int, default=0)
+    ap.add_argument("--mcq-file", default=None, help="4 択の問題ファイル（既定: artifacts/qa/mcq_eval.jsonl）")
     ap.add_argument("--jmmlu", action="store_true", help="JMMLU も評価する（数分かかる）")
     ap.add_argument("--jmmlu-cloze", action="store_true", help="JMMLU を cloze 方式でも評価する")
     ap.add_argument("--mmlu-pro", action="store_true", help="MMLU-Pro も評価する（同分野 5-shot・尤度方式）")
@@ -405,7 +407,8 @@ def main():
         result["holdout_ppl"] = holdout_perplexity(model, tokenizer, args.seq_len)
         print("holdout_ppl", json.dumps(result["holdout_ppl"], ensure_ascii=False), flush=True)
     if not args.skip_mcq:
-        result["mcq"] = mcq_accuracy(model, tokenizer, args.mcq_limit)
+        result["mcq"] = mcq_accuracy(model, tokenizer, args.mcq_limit, args.mcq_file)
+        result["mcq"]["file"] = args.mcq_file or str(QA_DIR / "mcq_eval.jsonl")
         print("mcq", {k: v for k, v in result["mcq"].items() if k != "predictions"}, flush=True)
     if args.jmmlu:
         result["jmmlu"] = jmmlu_accuracy(model, tokenizer)

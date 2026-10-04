@@ -58,7 +58,10 @@ SHUFFLE_SEED = 20261004
 
 TASKS = {
     "sft": {"split": "train", "prompt": SFT_PROMPT, "schema": SFT_SCHEMA, "temperature": 0.7, "max_tokens": 3000},
-    "mcq": {"split": "qa_eval", "prompt": MCQ_PROMPT, "schema": MCQ_SCHEMA, "temperature": 0.3, "max_tokens": 3000},
+    # 4 択の生成元。既定は qa_eval（CPT で読ませる範囲）。ENG_CPT_MCQ_SPLIT=holdout_ppl で、
+    # CPT で一度も読ませていない範囲から作る（CPT の効果が暗記か一般化かを切り分ける評価用）
+    "mcq": {"split": os.environ.get("ENG_CPT_MCQ_SPLIT", "qa_eval"), "prompt": MCQ_PROMPT, "schema": MCQ_SCHEMA,
+            "temperature": 0.3, "max_tokens": 3000},
 }
 # 抜粋を前提にした（自己完結しない）表現。含む QA は捨てる
 SEED_SPACE = 2**31 - 1
