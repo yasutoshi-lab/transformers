@@ -47,8 +47,7 @@ cd examples/pytorch/eng-cpt
 ```
 
 Hub 上のデータセット（いずれも **private**）: [`yasutoshi-lab/eng-textbook-cpt-ja`](https://huggingface.co/datasets/yasutoshi-lab/eng-textbook-cpt-ja)（前処理コーパス）、[`yasutoshi-lab/eng-textbook-sft-ja`](https://huggingface.co/datasets/yasutoshi-lab/eng-textbook-sft-ja)（SFT 用 QA 6,591 件）。
-（
-push 前に private であることを確認し、public なら中断する。`drop_samples.jsonl` は送らない）
+push 前に private であることを確認し、public なら中断する。`drop_samples.jsonl` は送らない。
 
 ```python
 from datasets import load_dataset
