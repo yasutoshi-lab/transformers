@@ -31,6 +31,11 @@ ROOT = Path(__file__).resolve().parent.parent
 QA_DIR = ROOT / "artifacts" / "qa"
 RUNS = ROOT / "artifacts" / "runs"
 CHAT_TEMPLATE_MODEL = "google/gemma-4-E4B-it"
+CHAT_TEMPLATE_REVISION = "ee0ef6023621cff504d758262d4e04895a5af4a2"
+# チャット形式の生成を止めるトークン。base の generation_config は <eos>(1) だけだが、
+# -it の公式 generation_config は [<eos>, <turn|>, <|tool_response>] = [1, 106, 50] で止める。
+# base の設定のままだと、SFT 済みモデルが <turn|> を出しても止まらず回答を繰り返す
+CHAT_EOS_TOKEN_IDS = [1, 106, 50]
 FEWSHOT_TEMPLATE = "質問: {q}\n回答: {a}\n\n"
 STOP = "\n\n質問:"
 # 条件名 → (merge する adapter のリスト, チャット形式か)
@@ -79,7 +84,7 @@ def fewshot_prefix(seed, n=3):
 
 
 @torch.no_grad()
-def generate(model, tokenizer, prompt, max_new_tokens, add_bos):
+def generate(model, tokenizer, prompt, max_new_tokens, add_bos, eos_token_id=None):
     """貪欲法で生成し、プロンプトより後ろだけを返す.
 
     Args:
@@ -88,6 +93,7 @@ def generate(model, tokenizer, prompt, max_new_tokens, add_bos):
         prompt (str): プロンプト。
         max_new_tokens (int): 最大生成トークン数。
         add_bos (bool): 先頭に BOS を付けるか（チャットテンプレートは自前で付ける）。
+        eos_token_id (list[int] | None): 生成を止めるトークン（``None`` ならモデルの既定）。
 
     Returns:
         str: 生成テキスト（few-shot の場合は次の「質問:」の手前で打ち切る）。
@@ -97,7 +103,7 @@ def generate(model, tokenizer, prompt, max_new_tokens, add_bos):
         ids = [tokenizer.bos_token_id] + ids
     x = torch.tensor([ids], device="cuda")
     out = model.generate(input_ids=x, attention_mask=torch.ones_like(x), max_new_tokens=max_new_tokens,
-                         do_sample=False, pad_token_id=tokenizer.pad_token_id)
+                         do_sample=False, pad_token_id=tokenizer.pad_token_id, eos_token_id=eos_token_id)
     text = tokenizer.decode(out[0, len(ids):], skip_special_tokens=True)
     return text.split(STOP)[0].strip()
 
@@ -117,7 +123,8 @@ def main():
     questions = pick_questions({"mechanical": 5, "electrical": 5, "aeronautical": 2}, args.seed)
     prefix = fewshot_prefix(args.seed)
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
-    tokenizer.chat_template = AutoTokenizer.from_pretrained(CHAT_TEMPLATE_MODEL).chat_template
+    tokenizer.chat_template = AutoTokenizer.from_pretrained(CHAT_TEMPLATE_MODEL,
+                                                            revision=CHAT_TEMPLATE_REVISION).chat_template
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -132,7 +139,8 @@ def main():
             if chat:
                 prompt = tokenizer.apply_chat_template([{"role": "user", "content": q["question"]}], tokenize=False,
                                                        add_generation_prompt=True)
-                answers[q["id"]][cond] = generate(model, tokenizer, prompt, args.max_new_tokens, add_bos=False)
+                answers[q["id"]][cond] = generate(model, tokenizer, prompt, args.max_new_tokens, add_bos=False,
+                                                  eos_token_id=CHAT_EOS_TOKEN_IDS)
             else:
                 prompt = prefix + f"質問: {q['question']}\n回答:"
                 answers[q["id"]][cond] = generate(model, tokenizer, prompt, args.max_new_tokens, add_bos=True)
