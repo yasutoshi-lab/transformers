@@ -2,9 +2,11 @@
 
 Upload the preprocessed CPT corpus or the SFT QA set to a private Hugging Face dataset repository.
 
-``--kind corpus``: ``artifacts/data/{train,qa_eval,holdout_ppl}.jsonl`` を 3 split で push する。
-``--kind sft``   : ``artifacts/qa/sft.jsonl`` を train split で push する。
-データセットカード（README.md）には本文を含まない数値とスキーマだけを書く。
+``--kind corpus``: ``artifacts/data/{train,qa_eval,holdout_ppl}.jsonl`` を 3 split で push し、
+                  ``manifest.json`` をリポジトリ直下に置く。
+``--kind sft``   : ``artifacts/qa/sft.jsonl`` を train split で push し、``qa_manifest.json`` と
+                  生成の生出力 ``raw/sft_raw.jsonl``（後処理の再現に必要）を置く。
+データセットカード（README.md）には本文を含まない数値・スキーマ・再現情報だけを書く。
 
 安全策:
     - push の前に private でリポジトリを作成し、private であることを確認してから送る。
@@ -86,6 +88,14 @@ configs:
 - 質問は抜粋を読んでいない人にも通じる形（「本文」「図3」などの参照を禁止）、回答は抜粋の内容のみで 2〜5 文
 - JSON スキーマ固定で生成。JSON 文字列内の未エスケープ LaTeX（`\\frac` が改ページ+`rac` になる等）は復元済み
 - 生成コード: `yasutoshi-lab/transformers` の `gemma4-eng-cpt` ブランチ `examples/pytorch/eng-cpt/qagen/`
+
+## 再現情報
+
+- 生成モデル: `{generator}` revision `{generator_revision}`（vLLM `{vllm_image}` / `{vllm_image_id}`）
+- 生成の生出力: `raw/sft_raw.jsonl`。これに後処理（`python -m qagen.build_qa --postprocess-only --steps sft`）を
+  かけると `data/` の内容とバイト一致する。LLM 生成そのものは seed を指定しても完全一致は保証されない
+- 作成経緯（手作業の工程を含む）・プロンプトとパラメータ・出力の sha256 は `qa_manifest.json` を参照
+- manifest 作成時のコード: `yasutoshi-lab/transformers` `{code_commit}`
 """
 
 CARD_TEMPLATE = """---
@@ -158,14 +168,23 @@ configs:
 ## 対象書籍
 
 {book_list}
+
+## 再現情報
+
+- 作成コード: `yasutoshi-lab/transformers` `{code_commit}`（`gemma4-eng-cpt` ブランチ `examples/pytorch/eng-cpt/`）
+- トークナイザ: `{tokenizer}` revision `{tokenizer_revision}`
+- 依存: {environment}
+- 入力: OCR JSON {n_inputs} 件（各 sha256 は `manifest.json`）。同じ入力・コード・依存で再実行すると出力はバイト一致する
+- 出力の sha256 / 行数・パラメータの全量は `manifest.json` を参照
 """
 
 
-def build_card(stats):
-    """stats.json の要約からデータセットカードの本文を作る.
+def build_card(stats, manifest):
+    """stats.json の要約と manifest からデータセットカードの本文を作る.
 
     Args:
         stats (dict): ``stats.json`` の内容。
+        manifest (dict): ``manifest.json`` の内容。
 
     Returns:
         str: データセットカード（YAML メタデータ付き Markdown）。
@@ -193,15 +212,20 @@ def build_card(stats):
         pages_dropped=sum(drops.values()),
         drop_list=drop_list,
         book_list=book_list,
+        code_commit=manifest["code"].get("commit", "unknown")[:10],
+        tokenizer=manifest["params"]["tokenizer"], tokenizer_revision=manifest["params"]["tokenizer_revision"],
+        environment=", ".join(f"{k} {v}" for k, v in manifest["environment"].items()),
+        n_inputs=len(manifest["inputs"]),
     )
 
 
-def build_sft_card(rows, qa_stats):
-    """SFT データと qa_stats.json からデータセットカードを作る.
+def build_sft_card(rows, qa_stats, qa_manifest):
+    """SFT データ・qa_stats.json・qa_manifest.json からデータセットカードを作る.
 
     Args:
         rows (list[dict]): sft.jsonl の行。
         qa_stats (dict): ``artifacts/qa/qa_stats.json`` の内容。
+        qa_manifest (dict): ``artifacts/qa/qa_manifest.json`` の内容。
 
     Returns:
         str: データセットカード（YAML メタデータ付き Markdown）。
@@ -215,6 +239,9 @@ def build_sft_card(rows, qa_stats):
         rows=len(rows), categories=" / ".join(f"{k} {v:,}" for k, v in cats.items()),
         chunks=c["sft_chunks"], raw=c["sft_raw_items"], drop_ref=c.get("sft_drop_source_ref", 0),
         drop_dup=c.get("sft_drop_dup", 0), prompt_tokens=u["prompt_tokens"], completion_tokens=u["completion_tokens"],
+        generator=qa_manifest["generator"]["model"], generator_revision=qa_manifest["generator"]["revision"],
+        vllm_image=qa_manifest["generator"]["vllm_image"], vllm_image_id=qa_manifest["generator"]["vllm_image_id"],
+        code_commit=qa_manifest["code"].get("commit", "unknown")[:10],
     )
 
 
@@ -251,21 +278,31 @@ def main():
 
     if args.kind == "corpus":
         stats = json.loads((args.data_dir / "stats.json").read_text())
+        manifest = json.loads((args.data_dir / "manifest.json").read_text())
         ds = load_dataset("json", data_files={s: str(args.data_dir / f"{s}.jsonl") for s in SPLITS})
-        card, message = build_card(stats), "前処理済みコーパスを追加"
+        card, message = build_card(stats, manifest), "前処理済みコーパスを追加"
+        extra_files = {"manifest.json": args.data_dir / "manifest.json"}
     else:
         path = QA_DIR / "sft.jsonl"
         with open(path) as f:
             rows = [json.loads(line) for line in f]
+        qa_manifest = json.loads((QA_DIR / "qa_manifest.json").read_text())
         ds = load_dataset("json", data_files={"train": str(path)})
-        card = build_sft_card(rows, json.loads((QA_DIR / "qa_stats.json").read_text()))
+        card = build_sft_card(rows, json.loads((QA_DIR / "qa_stats.json").read_text()), qa_manifest)
         message = "SFT データを追加"
+        extra_files = {"qa_manifest.json": QA_DIR / "qa_manifest.json", "raw/sft_raw.jsonl": QA_DIR / "sft_raw.jsonl"}
+    for name, local in extra_files.items():
+        if not local.exists():
+            raise FileNotFoundError(f"{local} がありません（manifest を先に作成してください）")
     print(ds)
 
     api = HfApi()
     ensure_private_repo(api, args.repo_id)
     ds.push_to_hub(args.repo_id, private=True, commit_message=message)
-    DatasetCard(card).push_to_hub(args.repo_id, repo_type="dataset", commit_message="データセットカードを追加")
+    for name, local in extra_files.items():
+        api.upload_file(path_or_fileobj=str(local), path_in_repo=name, repo_id=args.repo_id, repo_type="dataset",
+                        commit_message=f"{name} を追加（再現性の記録）")
+    DatasetCard(card).push_to_hub(args.repo_id, repo_type="dataset", commit_message="データセットカードを更新")
     print(f"uploaded: https://huggingface.co/datasets/{args.repo_id} (private={api.dataset_info(args.repo_id).private})")
 
 

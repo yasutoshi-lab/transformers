@@ -1,0 +1,16 @@
+# eng-cpt: QA 生成クライアント・LoRA 学習・評価用（ws3-arc / Python 3.12.3 / driver 575.51.03 で動作確認した実バージョン）
+# torch は CUDA 12.9 版を別インデックスから入れる:
+#   uv pip install --python .venv/bin/python torch==2.13.0 --index-url https://download.pytorch.org/whl/cu129
+#   uv pip install --python .venv/bin/python -e . -r examples/pytorch/eng-cpt/requirements-train.txt
+# transformers はこのリポジトリ（gemma4-eng-cpt ブランチ, 5.6.0.dev0）を editable で使う
+peft==0.21.2
+accelerate==1.15.0
+datasets==5.0.1
+tokenizers==0.22.2
+huggingface_hub==1.33.0
+safetensors==0.8.0
+openai==3.24.0
+opencc==1.4.2
+datasketch==2.0.0
+numpy==2.5.3
+triton==3.7.1

@@ -8,11 +8,18 @@ Regenerate distractors so that the correct choice is not identifiable by its len
 条件を満たさなければ最大 ``MAX_ATTEMPTS`` 回まで再生成する。最後に抜粋を見せた自己検証を通す。
 
 入出力（``artifacts/qa/``）:
-    mcq_eval.jsonl     入力（初回実行時に mcq_eval_v1.jsonl として退避）→ 作り直し後で上書き
+    mcq_eval_v1.jsonl     入力（qagen.generate_qa --task mcq の出力）
+    mcq_eval.jsonl        出力（誤答を作り直した最終版）
+    rebalance_raw.jsonl   問題ごとの各試行の誤答（生出力。``--postprocess-only`` はこれを使う）
+    rebalance_verify_cache.jsonl  自己検証の結果
     rebalance_stats.json  件数と長さ偏りの前後比較
+
+再現性: 生成リクエストには問題 ID と試行番号から決まる seed を渡す。``--postprocess-only`` では
+生出力と検証キャッシュから最終ファイルだけを作り直す（LLM を呼ばない）。
 
 使い方（eng-cpt/ 直下で実行）:
     python -m qagen.rebalance_mcq
+    python -m qagen.rebalance_mcq --postprocess-only
 """
 
 import argparse
@@ -20,11 +27,19 @@ import asyncio
 import collections
 import json
 import random
-import shutil
 
 from openai import AsyncOpenAI
 
-from qagen.generate_qa import OUT_DIR, SHUFFLE_SEED, _norm, call_json, load_chunks, shuffle_choices, verify_mcq
+from qagen.generate_qa import (
+    OUT_DIR,
+    SHUFFLE_SEED,
+    _norm,
+    call_json,
+    load_chunks,
+    request_seed,
+    shuffle_choices,
+    verify_mcq,
+)
 
 
 LEN_TOLERANCE = 0.25
@@ -83,39 +98,60 @@ def longest_is_correct_rate(rows):
     return hit / len(rows)
 
 
-async def regenerate(client, item, chunk_text, sem, stats):
-    """1 問の誤答を、長さ条件を満たすまで最大 ``MAX_ATTEMPTS`` 回生成する.
+def select_distractors(item, attempts, stats):
+    """各試行の誤答から、長さ条件を最初に満たした組を選ぶ（満たさなければ最後の有効な組）.
 
     Args:
-        client (AsyncOpenAI): vLLM クライアント。
-        item (dict): 4 択問題（``choices`` / ``answer``）。
-        chunk_text (dict[str, str]): chunk_id→抜粋本文。
-        sem (asyncio.Semaphore): 同時実行数の制御。
+        item (dict): 元の 4 択問題（``choices`` / ``answer``）。
+        attempts (list[list[str] | None]): 試行ごとの誤答 3 つ（失敗した試行は ``None``）。
         stats (collections.Counter): 件数の加算先。
 
     Returns:
-        dict: ``options``（先頭が正解）を差し替えた item。条件を満たせなければ最後の試行結果。
+        dict: ``options``（先頭が正解）を付けた item。
+    """
+    correct = item["choices"][item["answer"]]
+    lo, hi = length_bounds(correct)
+    best = [c for i, c in enumerate(item["choices"]) if i != item["answer"]]
+    for n, ds in enumerate(attempts, start=1):
+        if ds is None or len({_norm(x) for x in ds + [correct]}) < 4:
+            continue
+        best = ds
+        if all(lo <= len(d) <= hi for d in ds):
+            stats[f"length_ok_attempt{n}"] += 1
+            return {**item, "options": [correct] + ds}
+    stats["length_not_met"] += 1
+    return {**item, "options": [correct] + best}
+
+
+async def generate_attempts(client, item, chunk_text, sem):
+    """1 問について、長さ条件を満たすまで最大 ``MAX_ATTEMPTS`` 回、誤答を生成する.
+
+    Args:
+        client (AsyncOpenAI): vLLM クライアント。
+        item (dict): 4 択問題。
+        chunk_text (dict[str, str]): chunk_id→抜粋本文。
+        sem (asyncio.Semaphore): 同時実行数の制御。
+
+    Returns:
+        list[list[str] | None]: 試行ごとの誤答（失敗した試行は ``None``）。
     """
     correct = item["choices"][item["answer"]]
     lo, hi = length_bounds(correct)
     prompt = REBALANCE_PROMPT.format(n_chars=len(correct), lo=lo, hi=hi, text=chunk_text[item["chunk_id"]],
                                      question=item["question"], correct=correct)
-    best = [c for i, c in enumerate(item["choices"]) if i != item["answer"]]
+    attempts = []
     for attempt in range(MAX_ATTEMPTS):
         async with sem:
             try:
-                parsed, _ = await call_json(client, prompt, REBALANCE_SCHEMA, 0.7, 800)
-            except Exception:  # noqa: BLE001 — 失敗した試行は次の試行へ
-                continue
-        ds = [d.strip() for d in parsed["distractors"]]
-        if len({_norm(x) for x in ds + [correct]}) < 4:
-            continue
-        best = ds
-        if all(lo <= len(d) <= hi for d in ds):
-            stats[f"length_ok_attempt{attempt + 1}"] += 1
-            return {**item, "options": [correct] + ds}
-    stats["length_not_met"] += 1
-    return {**item, "options": [correct] + best}
+                parsed, _ = await call_json(client, prompt, REBALANCE_SCHEMA, 0.7, 800,
+                                            seed=request_seed("rebalance", item["id"], str(attempt)))
+                ds = [d.strip() for d in parsed["distractors"]]
+            except Exception:  # noqa: BLE001 — 失敗した試行は None として残す
+                ds = None
+        attempts.append(ds)
+        if ds and len({_norm(x) for x in ds + [correct]}) == 4 and all(lo <= len(d) <= hi for d in ds):
+            break
+    return attempts
 
 
 async def run(args):
@@ -127,21 +163,30 @@ async def run(args):
     Returns:
         None
     """
-    path, backup = OUT_DIR / "mcq_eval.jsonl", OUT_DIR / "mcq_eval_v1.jsonl"
-    if not backup.exists():
-        shutil.copy(path, backup)
-    with open(backup) as f:
+    path = OUT_DIR / "mcq_eval.jsonl"
+    with open(OUT_DIR / "mcq_eval_v1.jsonl") as f:
         rows = [json.loads(line) for line in f]
     chunk_text = {c["chunk_id"]: c["text"] for c in load_chunks("qa_eval")}
-    client = AsyncOpenAI(base_url=args.base_url, api_key="EMPTY", timeout=600)
+    client = None if args.postprocess_only else AsyncOpenAI(base_url=args.base_url, api_key="EMPTY", timeout=600)
     stats = collections.Counter(input=len(rows))
     sem = asyncio.Semaphore(args.concurrency)
-    items = await asyncio.gather(*(regenerate(client, r, chunk_text, sem, stats) for r in rows))
+    raw_path = OUT_DIR / "rebalance_raw.jsonl"
+    if args.postprocess_only:
+        with open(raw_path) as f:
+            raw = {r["id"]: r["attempts"] for r in map(json.loads, f)}
+    else:
+        all_attempts = await asyncio.gather(*(generate_attempts(client, r, chunk_text, sem) for r in rows))
+        raw = {r["id"]: a for r, a in zip(rows, all_attempts)}
+        with open(raw_path, "w") as f:
+            for r in rows:
+                f.write(json.dumps({"id": r["id"], "attempts": raw[r["id"]]}, ensure_ascii=False) + "\n")
+    items = [select_distractors(r, raw[r["id"]], stats) for r in rows]
 
     rng = random.Random(SHUFFLE_SEED)
     for it in items:
         it["choices"], it["answer"] = shuffle_choices(it, rng)
-    verified = await verify_mcq(client, items, chunk_text, args.concurrency, stats)
+    verified = await verify_mcq(client, items, chunk_text, args.concurrency, stats,
+                                cache_path=OUT_DIR / "rebalance_verify_cache.jsonl")
     out_rows = [{"id": r["id"], **{k: r[k] for k in ("source_id", "chunk_id", "book", "category", "question")},
                  "choices": r["choices"], "answer": r["answer"], "evidence": r["evidence"]} for r in verified]
     with open(path, "w") as f:
@@ -163,6 +208,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--base-url", default="http://localhost:8010/v1")
     ap.add_argument("--concurrency", type=int, default=48)
+    ap.add_argument("--postprocess-only", action="store_true", help="生成せず、生出力と検証キャッシュから作り直す")
     asyncio.run(run(ap.parse_args()))
 
 

@@ -13,18 +13,29 @@ with a local vLLM server (OpenAI-compatible API).
 
 出力（``artifacts/qa/``、git 追跡外）:
     sft.jsonl       {id, source_id, chunk_id, book, category, messages: [user, assistant]}
-    mcq_eval.jsonl  {id, source_id, chunk_id, book, category, question, choices[4], answer(0-3), evidence}
+    mcq_eval_v1.jsonl  {id, source_id, chunk_id, book, category, question, choices[4], answer(0-3), evidence}
+                    （誤答を作り直す前の 4 択。最終版 mcq_eval.jsonl は qagen.rebalance_mcq が作る）
     qa_stats.json   各段階の件数
+
+再現性:
+    - 生成リクエストには chunk_id から決まる seed を渡す（``request_seed``）。ただし vLLM の
+      バッチ処理の影響で、同じ seed でも出力が完全に一致する保証はない。そのため再現性の
+      基準は「保存した生出力（``*_raw.jsonl``）から後処理を再実行して同じ最終ファイルになること」とする
+    - 4 択の自己検証の結果は ``mcq_verify_cache.jsonl`` に保存し、``--postprocess-only`` では
+      LLM を呼ばずにキャッシュを使う（キャッシュに無い問題がある場合のみ LLM を呼ぶ）
 
 使い方（eng-cpt/ 直下で実行。vLLM は qagen/docker-compose.ws3-arc.yml）:
     python -m qagen.generate_qa --task sft
     python -m qagen.generate_qa --task mcq
+    python -m qagen.generate_qa --task sft --postprocess-only   # 生出力から後処理だけ再実行
 """
 
 import argparse
 import asyncio
 import collections
+import hashlib
 import json
+import os
 import random
 import re
 import time
@@ -37,7 +48,8 @@ from qagen.prompts import MCQ_PROMPT, MCQ_SCHEMA, SFT_PROMPT, SFT_SCHEMA, VERIFY
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "artifacts" / "data"
-OUT_DIR = ROOT / "artifacts" / "qa"
+# 出力先。測り直しなどで既存の成果物を上書きしないよう、環境変数 ENG_CPT_QA_DIR で切り替えられる
+OUT_DIR = Path(os.environ.get("ENG_CPT_QA_DIR", ROOT / "artifacts" / "qa")).resolve()
 CHUNK_CHARS = 1500
 MIN_CHUNK_CHARS = 300
 ITEMS_PER_CHUNK = 4
@@ -48,6 +60,7 @@ TASKS = {
     "mcq": {"split": "qa_eval", "prompt": MCQ_PROMPT, "schema": MCQ_SCHEMA, "temperature": 0.3, "max_tokens": 3000},
 }
 # 抜粋を前提にした（自己完結しない）表現。含む QA は捨てる
+SEED_SPACE = 2**31 - 1
 RE_SOURCE_REF = re.compile(
     r"本文|この文章|上記|抜粋|本書|この章|図\s*[\d０-９]|表\s*[\d０-９]|式\s*[\(（]?[\d０-９]|点\s*[A-ZＡ-Ｚ](?![A-Za-z])"
 )
@@ -138,7 +151,20 @@ def fix_latex_escapes(value):
     return RE_INLINE_MATH.sub(lambda m: re.sub(r"\n(?=[A-Za-z])", r"\\n", m.group()), value)
 
 
-async def call_json(client, prompt, schema, temperature, max_tokens):
+def request_seed(*keys):
+    """リクエストの seed をキー文字列から決定的に作る.
+
+    Args:
+        *keys (str): seed の元にする文字列（タスク名・chunk_id など）。
+
+    Returns:
+        int: 0〜2^31-2 の整数。
+    """
+    digest = hashlib.sha256("\x1f".join(keys).encode()).hexdigest()
+    return int(digest, 16) % SEED_SPACE
+
+
+async def call_json(client, prompt, schema, temperature, max_tokens, seed=None):
     """JSON スキーマ固定で 1 回生成し、パース済みの dict を返す.
 
     Args:
@@ -147,6 +173,7 @@ async def call_json(client, prompt, schema, temperature, max_tokens):
         schema (dict): 出力 JSON スキーマ。
         temperature (float): サンプリング温度。
         max_tokens (int): 最大生成トークン数。
+        seed (int | None): サンプリングの seed（``request_seed`` で作る）。
 
     Returns:
         tuple[dict, dict]: ``(パース結果, usage)``。
@@ -159,6 +186,7 @@ async def call_json(client, prompt, schema, temperature, max_tokens):
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
         max_tokens=max_tokens,
+        seed=seed,
         response_format={"type": "json_schema", "json_schema": {"name": "out", "schema": schema}},
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
@@ -177,7 +205,7 @@ async def generate(client, task, chunks, raw_path, concurrency):
         concurrency (int): 同時リクエスト数。
 
     Returns:
-        None
+        int: 今回新たに生成できたチャンク数。
     """
     done = set()
     if raw_path.exists():
@@ -193,7 +221,8 @@ async def generate(client, task, chunks, raw_path, concurrency):
         prompt = task["prompt"].format(n=ITEMS_PER_CHUNK, book=c["book"], text=c["text"])
         async with sem:
             try:
-                parsed, usage = await call_json(client, prompt, task["schema"], task["temperature"], task["max_tokens"])
+                parsed, usage = await call_json(client, prompt, task["schema"], task["temperature"], task["max_tokens"],
+                                                seed=request_seed(task["split"], c["chunk_id"]))
                 rec = {**{k: c[k] for k in ("chunk_id", "source_id", "book", "category")},
                        "items": parsed.get("items", []), "usage": usage}
             except Exception as e:  # noqa: BLE001 — 失敗チャンクは記録せず、再実行時に再試行する
@@ -209,6 +238,7 @@ async def generate(client, task, chunks, raw_path, concurrency):
 
     await asyncio.gather(*(worker(c) for c in todo))
     print(f"generated: ok={progress['ok']} error={progress['error']}", flush=True)
+    return progress["ok"]
 
 
 def read_raw(raw_path):
@@ -310,19 +340,59 @@ def shuffle_choices(item, rng):
     return [item["options"][i] for i in order], order.index(0)
 
 
-async def verify_mcq(client, items, chunk_text, concurrency, stats):
-    """抜粋を見せてモデル自身に解かせ、正解できた問題だけを残す.
+def verify_key(item):
+    """自己検証キャッシュのキー（抜粋・問題文・選択肢の並びで決まる）を返す.
 
     Args:
-        client (AsyncOpenAI): vLLM クライアント。
+        item (dict): ``chunk_id`` / ``question`` / ``choices`` を持つ 4 択問題。
+
+    Returns:
+        str: sha256 の 16 進文字列。
+    """
+    payload = json.dumps([item["chunk_id"], item["question"], item["choices"]], ensure_ascii=False)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def load_verify_cache(path):
+    """自己検証キャッシュを読み込む.
+
+    Args:
+        path (pathlib.Path): キャッシュの JSONL。
+
+    Returns:
+        dict[str, bool]: キー→正解できたか。
+    """
+    if not path.exists():
+        return {}
+    with open(path) as f:
+        return {r["key"]: r["ok"] for r in map(json.loads, f)}
+
+
+async def verify_mcq(client, items, chunk_text, concurrency, stats, cache_path=None):
+    """抜粋を見せてモデル自身に解かせ、正解できた問題だけを残す.
+
+    処理概要: ``cache_path`` に結果がある問題は LLM を呼ばずにキャッシュを使い、
+    無い問題だけ LLM で検証して結果をキャッシュへ追記する。
+
+    Args:
+        client (AsyncOpenAI | None): vLLM クライアント（全問がキャッシュにあれば ``None`` でよい）。
         items (list[dict]): ``filter_mcq`` の結果（``choices`` / ``answer`` 付与済み）。
         chunk_text (dict[str, str]): chunk_id→抜粋本文。
         concurrency (int): 同時リクエスト数。
-        stats (collections.Counter): 件数の加算先。
+        stats (collections.Counter): 件数の加算先（``mcq_verify_cache_hit`` も記録）。
+        cache_path (pathlib.Path | None): 検証結果のキャッシュ。
 
     Returns:
         list[dict]: 検証を通過した item。
+
+    Raises:
+        RuntimeError: キャッシュに無い問題があるのに ``client`` が ``None`` の場合。
     """
+    cache = load_verify_cache(cache_path) if cache_path else {}
+    missing = [it for it in items if verify_key(it) not in cache]
+    stats["mcq_verify_cache_hit"] += len(items) - len(missing)
+    if missing and client is None:
+        raise RuntimeError(f"検証キャッシュに無い問題が {len(missing)} 問あります（LLM への接続が必要）")
     sem = asyncio.Semaphore(concurrency)
 
     async def check(it):
@@ -332,10 +402,17 @@ async def verify_mcq(client, items, chunk_text, concurrency, stats):
             try:
                 parsed, _ = await call_json(client, prompt, VERIFY_SCHEMA, 0.0, 20)
                 return parsed["answer"] - 1 == it["answer"]
-            except Exception:  # noqa: BLE001 — 検証できない問題は採用しない
-                return False
+            except Exception:  # noqa: BLE001 — 検証できない問題は採用しない（キャッシュしない）
+                return None
 
-    ok = await asyncio.gather(*(check(it) for it in items))
+    results = await asyncio.gather(*(check(it) for it in missing))
+    if cache_path:
+        with open(cache_path, "a") as f:
+            for it, r in zip(missing, results):
+                if r is not None:
+                    f.write(json.dumps({"key": verify_key(it), "id_hint": it["chunk_id"], "ok": r}) + "\n")
+    cache.update({verify_key(it): bool(r) for it, r in zip(missing, results)})
+    ok = [cache[verify_key(it)] for it in items]
     stats["mcq_drop_verify_failed"] += sum(not x for x in ok)
     return [it for it, x in zip(items, ok) if x]
 
@@ -366,14 +443,16 @@ async def run(args):
     """
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     task = TASKS[args.task]
-    client = AsyncOpenAI(base_url=args.base_url, api_key="EMPTY", timeout=600)
+    client = None if args.postprocess_only else AsyncOpenAI(base_url=args.base_url, api_key="EMPTY", timeout=600)
     chunks = load_chunks(task["split"])
     if args.limit:
         chunks = chunks[: args.limit]
     raw_path = OUT_DIR / f"{args.task}_raw.jsonl"
-    t0 = time.time()
-    await generate(client, task, chunks, raw_path, args.concurrency)
-    gen_seconds = time.time() - t0
+    n_generated, gen_seconds = 0, 0.0
+    if not args.postprocess_only:
+        t0 = time.time()
+        n_generated = await generate(client, task, chunks, raw_path, args.concurrency)
+        gen_seconds = time.time() - t0
 
     items, usage = read_raw(raw_path)
     stats = collections.Counter({f"{args.task}_chunks": len(chunks), f"{args.task}_raw_items": len(items)})
@@ -390,18 +469,22 @@ async def run(args):
         for it in kept:
             it["choices"], it["answer"] = shuffle_choices(it, rng)
         chunk_text = {c["chunk_id"]: c["text"] for c in chunks}
-        kept = await verify_mcq(client, kept, chunk_text, args.concurrency, stats)
+        kept = await verify_mcq(client, kept, chunk_text, args.concurrency, stats,
+                                cache_path=OUT_DIR / "mcq_verify_cache.jsonl")
         rows = [{"id": f"mcq-{i:04d}", **{k: it[k] for k in common}, "question": it["question"],
                  "choices": it["choices"], "answer": it["answer"], "evidence": it["evidence"]} for i, it in enumerate(kept)]
-        write_jsonl(OUT_DIR / "mcq_eval.jsonl", rows)
+        write_jsonl(OUT_DIR / "mcq_eval_v1.jsonl", rows)
     stats[f"{args.task}_final"] = len(rows)
 
     stats_path = OUT_DIR / "qa_stats.json"
     all_stats = json.loads(stats_path.read_text()) if stats_path.exists() else {}
     # コスト算出用: 生成の経過秒（再開時は今回分のみ。全件分は runs に累積する）
-    prev = all_stats.get(args.task, {}).get("runs", [])
-    runs = prev + [{"chunks_generated": len(chunks), "generate_seconds": gen_seconds, "concurrency": args.concurrency}]
-    all_stats[args.task] = {"counts": dict(stats), "usage": usage, "runs": runs}
+    runs = all_stats.get(args.task, {}).get("runs", [])
+    if n_generated:
+        runs = runs + [{"chunks_generated": n_generated, "generate_seconds": gen_seconds, "concurrency": args.concurrency}]
+    all_stats[args.task] = {"counts": dict(stats), "usage": usage}
+    if runs:
+        all_stats[args.task]["runs"] = runs
     stats_path.write_text(json.dumps(all_stats, ensure_ascii=False, indent=1))
     print(json.dumps(all_stats[args.task], ensure_ascii=False, indent=1))
 
@@ -417,6 +500,7 @@ def main():
     ap.add_argument("--base-url", default="http://localhost:8010/v1")
     ap.add_argument("--concurrency", type=int, default=48)
     ap.add_argument("--limit", type=int, default=0, help="先頭 N チャンクだけ処理（試験用）")
+    ap.add_argument("--postprocess-only", action="store_true", help="生成せず、保存済みの生出力から後処理だけ行う")
     args = ap.parse_args()
     asyncio.run(run(args))
 

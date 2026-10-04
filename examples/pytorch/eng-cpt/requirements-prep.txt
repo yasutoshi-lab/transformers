@@ -1,0 +1,9 @@
+# eng-cpt: 前処理・QA 後処理・HF アップロード用（このホスト / Python 3.12.3 で動作確認した実バージョン）
+# uv pip install --python .venv/bin/python -r examples/pytorch/eng-cpt/requirements-prep.txt
+opencc==1.4.2
+datasketch==2.0.0
+tokenizers==0.22.2
+huggingface_hub==1.33.0
+datasets==5.0.1
+openai==3.24.0
+numpy==2.5.3

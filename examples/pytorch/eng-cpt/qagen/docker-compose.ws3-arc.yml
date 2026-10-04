@@ -36,6 +36,7 @@ services:
               capabilities: [gpu]
     command:
       - nvidia/Gemma-4-26B-A4B-NVFP4
+      - --revision=a19cfe00be84568a6867111c9a68c9c44fdcffe6   # 再現性のため固定（qagen/build_qa.py と一致させる）
       - --served-model-name=qagen
       - --gpu-memory-utilization=0.90    # GPU1 はこのサーバ専用
       - --max-model-len=32768            # 入力チャンク（〜6k tokens）+ 出力に十分な長さ
