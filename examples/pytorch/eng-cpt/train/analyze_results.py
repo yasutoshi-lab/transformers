@@ -8,6 +8,7 @@ Aggregate eval results and training logs into report tables.
     2. Base との差（同じ問題での正誤を対にしたブートストラップ。区間が 0 を跨がなければ差ありとみなす）
     3. CPT の量の曲線（train 使用率 × エポック → 学習トークン数・GPU 時間・各指標）
     4. コスト（GPU 時間 × ``--gpu-hour-price``。単価を渡さない場合は GPU 時間のみ）
+       QA 生成・学習・評価（モデル読み込みを含む実測時間）を工程別に積み上げ、全体の合計も出す
 
 使い方（eng-cpt/ 直下で実行）:
     python -m train.analyze_results --gpu-hour-price 2.5 --currency USD
@@ -271,6 +272,110 @@ def cost_table(lines, out, price, currency):
         out["qa_generation"] = st
 
 
+def eval_kind(path):
+    """評価結果のファイルを用途別に分類する.
+
+    Args:
+        path (pathlib.Path): ``artifacts/eval`` 配下の評価 JSON。
+
+    Returns:
+        str: ``主実験・量の曲線（PPL / 自作4択 / JMMLU）`` などの区分名。
+    """
+    rel = path.relative_to(EVAL_DIR)
+    if rel.parts[0] == "jmmlu_cloze":
+        return "追加: JMMLU cloze 方式"
+    if rel.parts[0] == "mmlupro":
+        return "追加: MMLU-Pro"
+    return "主実験・量の曲線（PPL / 自作4択 / JMMLU）"
+
+
+def total_cost_table(lines, out, price, currency):
+    """QA 生成・学習・評価の GPU 時間を工程別に積み上げ、全体の合計を出す.
+
+    Args:
+        lines (list[str]): Markdown 行の追加先。
+        out (dict): JSON 出力の追加先。
+        price (float | None): GPU 1 時間あたりの単価。
+        currency (str): 通貨表記。
+
+    Returns:
+        None
+    """
+    rows = []   # (工程, 区分, 秒, 備考)
+    rerun = ROOT / "artifacts" / "qa_rerun" / "qa_stats.json"
+    timings = ROOT / "artifacts" / "qa_rerun" / "build_timings.json"
+    if rerun.exists() and timings.exists():
+        st, tm = json.loads(rerun.read_text()), json.loads(timings.read_text())
+        gen = sum(r["generate_seconds"] for v in st.values() for r in v.get("runs", []))
+        reb = sum(t["seconds"] for t in tm if t["step"] == "rebalance")
+        verify = sum(t["seconds"] for t in tm if t["step"] == "mcq") - sum(
+            r["generate_seconds"] for r in st["mcq"].get("runs", []))
+        rows += [("QA 生成", "生成（SFT・4択）", gen, "測り直し値。vLLM 起動時間は含まない"),
+                 ("QA 生成", "4択の自己検証", max(verify, 0), "測り直し値"),
+                 ("QA 生成", "誤答の作り直し", reb, "測り直し値")]
+    for d in sorted(RUNS_DIR.glob("*/run_summary.json")):
+        s = json.loads(d.read_text())
+        rows.append(("学習", f"{d.parent.name}（{s['mode']}）", s["wall_seconds"], "学習ループのみ（モデル読み込み・データ準備は含まない）"))
+    by_kind = {}
+    for f in sorted(EVAL_DIR.rglob("*.json")):
+        r = json.loads(f.read_text())
+        if "eval_seconds" in r:
+            k = eval_kind(f)
+            by_kind.setdefault(k, [0.0, 0])
+            by_kind[k][0] += r["eval_seconds"]
+            by_kind[k][1] += 1
+    for k, (sec, n) in by_kind.items():
+        rows.append(("評価", f"{k}（{n} 回）", sec, "モデル読み込みを含む"))
+    gen_md = ROOT / "artifacts" / "report" / "generations.json"
+    if gen_md.exists():
+        rows.append(("評価", "生成比較（4 条件 × 12 問）", None, "時間未計測"))
+
+    cost_col = f" | コスト（{currency}）" if price else ""
+    lines += ["", "## 全工程の GPU 時間とコスト" + (f"（単価 {price} {currency}/GPU時間）" if price else ""), "",
+              f"| 工程 | 内訳 | 時間（分） | GPU 時間{cost_col} | 備考 |", "|---|---|---|---|---|" + ("---|" if price else "")]
+    totals = {}
+    for stage, item, sec, note in rows:
+        if sec is None:
+            lines.append(f"| {stage} | {item} | — | —" + (" | —" if price else "") + f" | {note} |")
+            continue
+        h = sec / 3600
+        totals[stage] = totals.get(stage, 0.0) + h
+        cost = f" | {h * price:.2f}" if price else ""
+        lines.append(f"| {stage} | {item} | {sec / 60:.1f} | {h:.3f}{cost} | {note} |")
+    for stage, h in totals.items():
+        cost = f" | **{h * price:.2f}**" if price else ""
+        lines.append(f"| **{stage} 小計** | | **{h * 60:.1f}** | **{h:.3f}**{cost} | |")
+    grand = sum(totals.values())
+    cost = f" | **{grand * price:.2f}**" if price else ""
+    lines.append(f"| **インスタンス合計** | | **{grand * 60:.1f}** | **{grand:.3f}**{cost} | GPU・CPU・RAM・一時ディスクを含むインスタンス料金 |")
+    out["total_cost"] = {"rows": [{"stage": a, "item": b, "seconds": c, "note": d} for a, b, c, d in rows],
+                         "gpu_hours_by_stage": totals, "gpu_hours_total": grand,
+                         "cost_total": grand * price if price else None}
+
+
+def storage_cost_table(lines, out, storage_gb, storage_price, days, currency):
+    """永続ストレージ（EBS 等）の費用を、容量 × 単価 × 確保期間で出す.
+
+    Args:
+        lines (list[str]): Markdown 行の追加先。
+        out (dict): JSON 出力の追加先。
+        storage_gb (float): 確保する容量（GB）。
+        storage_price (float): 1 GB・月あたりの単価。
+        days (float): 確保する日数（1 か月 = 30 日で日割り）。
+        currency (str): 通貨表記。
+
+    Returns:
+        None
+    """
+    monthly = storage_gb * storage_price
+    prorated = monthly * days / 30
+    lines += ["", f"## 永続ストレージ（単価 {storage_price} {currency}/GB・月）", "",
+              "| 容量 (GB) | 月額 | 確保日数 | 日割り額 |", "|---|---|---|---|",
+              f"| {storage_gb:g} | {monthly:.2f} | {days:g} | {prorated:.2f} |"]
+    out["storage_cost"] = {"gb": storage_gb, "price_per_gb_month": storage_price, "monthly": monthly,
+                           "days": days, "prorated": prorated}
+
+
 def main():
     """全表を作り、Markdown と JSON を書き出す.
 
@@ -280,6 +385,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--gpu-hour-price", type=float, default=None, help="GPU 1 時間あたりの単価（省略時はコスト列なし）")
     ap.add_argument("--currency", default="USD")
+    ap.add_argument("--storage-gb", type=float, default=None, help="永続ストレージの容量（GB）")
+    ap.add_argument("--storage-price", type=float, default=None, help="永続ストレージの単価（/GB・月）")
+    ap.add_argument("--storage-days", type=float, default=1.0, help="永続ストレージを確保する日数")
     ap.add_argument("--output-dir", type=Path, default=ROOT / "artifacts" / "report")
     args = ap.parse_args()
 
@@ -287,6 +395,9 @@ def main():
     main_table(lines, out)
     curve_table(lines, out, args.gpu_hour_price, args.currency)
     cost_table(lines, out, args.gpu_hour_price, args.currency)
+    total_cost_table(lines, out, args.gpu_hour_price, args.currency)
+    if args.storage_gb and args.storage_price:
+        storage_cost_table(lines, out, args.storage_gb, args.storage_price, args.storage_days, args.currency)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "results.md").write_text("\n".join(lines) + "\n")
     (args.output_dir / "results.json").write_text(json.dumps(out, ensure_ascii=False, indent=1))

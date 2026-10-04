@@ -151,6 +151,35 @@ def choice_logprobs(model, tokenizer, prompt, choices):
     return out
 
 
+@torch.no_grad()
+def next_token_logprobs(model, tokenizer, prompt, candidates):
+    """プロンプトを 1 回だけ通し、次の 1 トークンとしての各候補の対数確率を返す.
+
+    処理概要: 候補がすべて 1 トークン（" A" など）の場合、``choice_logprobs`` と同じ値を
+    候補の数だけプロンプトを複製せずに求められる。長い few-shot プロンプトで
+    メモリと時間を大きく節約する（MMLU-Pro の 10 択で約 10 倍）。
+
+    Args:
+        model (PreTrainedModel): 評価対象。
+        tokenizer (PreTrainedTokenizerBase): トークナイザ。
+        prompt (str): プロンプト。
+        candidates (list[str]): 1 トークンになる候補文字列。
+
+    Returns:
+        list[float]: 候補ごとの対数確率。
+
+    Raises:
+        ValueError: 候補が 1 トークンにならない場合。
+    """
+    cand_ids = [tokenizer(c, add_special_tokens=False)["input_ids"] for c in candidates]
+    if any(len(c) != 1 for c in cand_ids):
+        raise ValueError(f"1 トークンにならない候補があります: {candidates}")
+    ids = [tokenizer.bos_token_id] + tokenizer(prompt, add_special_tokens=False)["input_ids"]
+    logits = model(input_ids=torch.tensor([ids], device="cuda"), logits_to_keep=1).logits[0, -1].float()
+    logp = torch.log_softmax(logits, dim=-1)
+    return [logp[c[0]].item() for c in cand_ids]
+
+
 def mcq_accuracy(model, tokenizer, limit=0):
     """4 択 QA の正解率（acc / acc_norm）をカテゴリ別にも計算する.
 
@@ -324,7 +353,7 @@ def mmlu_pro_accuracy(model, tokenizer, shots=5, limit=0):
         prefix = MMLU_PRO_HEADER.format(category=r["category"]) + "".join(
             format_mmlu_pro(x, True) for x in fewshot.get(r["category"], [])[:shots])
         letters = [" " + MMLU_PRO_LETTERS[i] for i in range(len(r["options"]))]
-        lps = choice_logprobs(model, tokenizer, prefix + format_mmlu_pro(r, False), letters)
+        lps = next_token_logprobs(model, tokenizer, prefix + format_mmlu_pro(r, False), letters)
         pred = MMLU_PRO_LETTERS[max(range(len(lps)), key=lps.__getitem__)]
         hit = pred == r["answer"]
         c = by_cat.setdefault(r["category"], [0, 0])
@@ -332,6 +361,8 @@ def mmlu_pro_accuracy(model, tokenizer, shots=5, limit=0):
         c[1] += 1
         preds.append({"question_id": r["question_id"], "category": r["category"], "answer": r["answer"], "pred": pred,
                       "n_options": len(r["options"])})
+        if len(preds) % 1000 == 0:
+            print(f"mmlu_pro progress {len(preds)}/{len(rows)}", flush=True)
     n = sum(v[1] for v in by_cat.values())
     return {
         "n": n,
