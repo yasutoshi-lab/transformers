@@ -197,6 +197,8 @@ async def run(args):
               "longest_is_correct": {"before": longest_is_correct_rate(rows), "after": longest_is_correct_rate(out_rows)}}
     (OUT_DIR / "rebalance_stats.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
     print(json.dumps(report, ensure_ascii=False, indent=1))
+    if client is not None:
+        await client.close()
 
 
 def main():

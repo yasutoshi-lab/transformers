@@ -18,7 +18,8 @@ with a local vLLM server (OpenAI-compatible API).
     qa_stats.json   各段階の件数
 
 再現性:
-    - 生成リクエストには chunk_id から決まる seed を渡す（``request_seed``）。ただし vLLM の
+    - 生成リクエストには chunk_id と試行回数から決まる seed を渡す（``request_seed``。失敗した
+      チャンクの再試行で同じ出力が繰り返されないよう、試行回数を含める）。ただし vLLM の
       バッチ処理の影響で、同じ seed でも出力が完全に一致する保証はない。そのため再現性の
       基準は「保存した生出力（``*_raw.jsonl``）から後処理を再実行して同じ最終ファイルになること」とする
     - 4 択の自己検証の結果は ``mcq_verify_cache.jsonl`` に保存し、``--postprocess-only`` では
@@ -151,6 +152,10 @@ def fix_latex_escapes(value):
     return RE_INLINE_MATH.sub(lambda m: re.sub(r"\n(?=[A-Za-z])", r"\\n", m.group()), value)
 
 
+class TruncatedOutputError(RuntimeError):
+    """生成が max_tokens で打ち切られたことを表す（LaTeX の反復ループで起きやすい。seed を変えて再試行する）."""
+
+
 def request_seed(*keys):
     """リクエストの seed をキー文字列から決定的に作る.
 
@@ -179,7 +184,8 @@ async def call_json(client, prompt, schema, temperature, max_tokens, seed=None):
         tuple[dict, dict]: ``(パース結果, usage)``。
 
     Raises:
-        json.JSONDecodeError: 出力が JSON として読めない場合（長さ打ち切りなど）。
+        TruncatedOutputError: 出力が max_tokens で打ち切られた場合（``\\text{ }`` の反復ループなど）。
+        json.JSONDecodeError: 出力が JSON として読めない場合。
     """
     resp = await client.chat.completions.create(
         model="qagen",
@@ -191,10 +197,12 @@ async def call_json(client, prompt, schema, temperature, max_tokens, seed=None):
         extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     usage = {"prompt_tokens": resp.usage.prompt_tokens, "completion_tokens": resp.usage.completion_tokens}
+    if resp.choices[0].finish_reason == "length":
+        raise TruncatedOutputError(f"max_tokens={max_tokens} で打ち切り（反復ループの可能性）")
     return fix_latex_escapes(json.loads(resp.choices[0].message.content)), usage
 
 
-async def generate(client, task, chunks, raw_path, concurrency):
+async def generate(client, task, chunks, raw_path, concurrency, attempt=0):
     """未処理のチャンクだけ生成し、生出力を ``raw_path`` に追記する.
 
     Args:
@@ -203,6 +211,7 @@ async def generate(client, task, chunks, raw_path, concurrency):
         chunks (list[dict]): ``load_chunks`` の結果。
         raw_path (pathlib.Path): 生出力の JSONL（再開時は既存行を読んで処理済みを判定）。
         concurrency (int): 同時リクエスト数。
+        attempt (int): 再試行の回数（seed に含め、再試行のたびに異なる出力を得る）。
 
     Returns:
         int: 今回新たに生成できたチャンク数。
@@ -222,7 +231,7 @@ async def generate(client, task, chunks, raw_path, concurrency):
         async with sem:
             try:
                 parsed, usage = await call_json(client, prompt, task["schema"], task["temperature"], task["max_tokens"],
-                                                seed=request_seed(task["split"], c["chunk_id"]))
+                                                seed=request_seed(task["split"], c["chunk_id"], str(attempt)))
                 rec = {**{k: c[k] for k in ("chunk_id", "source_id", "book", "category")},
                        "items": parsed.get("items", []), "usage": usage}
             except Exception as e:  # noqa: BLE001 — 失敗チャンクは記録せず、再実行時に再試行する
@@ -451,7 +460,8 @@ async def run(args):
     n_generated, gen_seconds = 0, 0.0
     if not args.postprocess_only:
         t0 = time.time()
-        n_generated = await generate(client, task, chunks, raw_path, args.concurrency)
+        n_generated = await generate(client, task, chunks, raw_path, args.concurrency,
+                                     attempt=getattr(args, "attempt", 0))
         gen_seconds = time.time() - t0
 
     items, usage = read_raw(raw_path)
@@ -487,6 +497,8 @@ async def run(args):
         all_stats[args.task]["runs"] = runs
     stats_path.write_text(json.dumps(all_stats, ensure_ascii=False, indent=1))
     print(json.dumps(all_stats[args.task], ensure_ascii=False, indent=1))
+    if client is not None:
+        await client.close()   # イベントループ終了前に閉じる（閉じ忘れると終了時に例外が出る）
 
 
 def main():

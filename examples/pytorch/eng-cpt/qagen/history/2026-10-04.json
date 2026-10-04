@@ -3,7 +3,10 @@
  "corpus": {
   "code_commit": "35e2f7554d",
   "note": "prepare_eng_cpt_data.py の出力（train/qa_eval/holdout_ppl.jsonl, stats.json）は 35e2f7554d 以降のコードで再実行してもバイト一致することを確認済み（トークナイザ revision 固定・manifest 追加後も一致）",
-  "hub": {"repo": "yasutoshi-lab/eng-textbook-cpt-ja", "uploaded_revision": "370ccef4d2607720ea5811dcf0f20659b8449334"}
+  "hub": {
+   "repo": "yasutoshi-lab/eng-textbook-cpt-ja",
+   "uploaded_revision": "370ccef4d2607720ea5811dcf0f20659b8449334"
+  }
  },
  "qa": {
   "generator": {
@@ -16,12 +19,35 @@
    "host": "ws3-arc GPU1（RTX PRO 6000 Blackwell Max-Q 96GB, driver 575.51.03）"
   },
   "steps": [
-   {"step": "mcq 生成", "code": "49b6d1e53f の generate_qa.py と同等（ただし seed なし・LaTeX 復元なし・時間計測なし）", "result": "209 チャンク中 206 成功、3 チャンクは JSON 打ち切りで失敗"},
-   {"step": "sft 生成", "code": "同上", "result": "1688 チャンク中 1684 成功、4 チャンク失敗"},
-   {"step": "失敗チャンクの再実行", "result": "mcq 3 / sft 4 チャンクを再生成し、全チャンク完了。後処理で sft.jsonl 6591 件、mcq_eval（現 mcq_eval_v1）766 問"},
-   {"step": "LaTeX エスケープ修復", "code": "28c09eda4b の qagen/repair_escapes.py", "result": "sft_raw/sft/mcq_raw/mcq_eval_v1/mcq_eval の破損行を修復（冪等）"},
-   {"step": "誤答の作り直し", "code": "28c09eda4b の qagen/rebalance_mcq.py（seed なし・試行ごとの生出力は未保存）", "result": "761 問。正解が最長の割合 39.0% → 26.0%"},
-   {"step": "4 択自己検証キャッシュの事後復元", "code": "qagen/backfill_mcq_verify_cache.py", "result": "mcq_raw からのフィルタ・シャッフル結果 774 問と mcq_eval_v1 の対応（766 通過 / 8 不合格）から復元"}
+   {
+    "step": "mcq 生成",
+    "code": "49b6d1e53f の generate_qa.py と同等（ただし seed なし・LaTeX 復元なし・時間計測なし）",
+    "result": "209 チャンク中 206 成功、3 チャンクは JSON 打ち切りで失敗（失敗原因は後日の調査で、LaTeX の \\text{ } 等を繰り返す反復ループによる max_tokens 打ち切りと判明）"
+   },
+   {
+    "step": "sft 生成",
+    "code": "同上",
+    "result": "1688 チャンク中 1684 成功、4 チャンク失敗（失敗原因は後日の調査で、LaTeX の \\text{ } 等を繰り返す反復ループによる max_tokens 打ち切りと判明）"
+   },
+   {
+    "step": "失敗チャンクの再実行",
+    "result": "mcq 3 / sft 4 チャンクを再生成し、全チャンク完了。後処理で sft.jsonl 6591 件、mcq_eval（現 mcq_eval_v1）766 問"
+   },
+   {
+    "step": "LaTeX エスケープ修復",
+    "code": "28c09eda4b の qagen/repair_escapes.py",
+    "result": "sft_raw/sft/mcq_raw/mcq_eval_v1/mcq_eval の破損行を修復（冪等）"
+   },
+   {
+    "step": "誤答の作り直し",
+    "code": "28c09eda4b の qagen/rebalance_mcq.py（seed なし・試行ごとの生出力は未保存）",
+    "result": "761 問。正解が最長の割合 39.0% → 26.0%"
+   },
+   {
+    "step": "4 択自己検証キャッシュの事後復元",
+    "code": "qagen/backfill_mcq_verify_cache.py",
+    "result": "mcq_raw からのフィルタ・シャッフル結果 774 問と mcq_eval_v1 の対応（766 通過 / 8 不合格）から復元"
+   }
   ],
   "reproducibility": {
    "sft.jsonl": "sft_raw.jsonl から --postprocess-only でバイト一致を確認",
@@ -29,7 +55,30 @@
    "mcq_eval.jsonl": "誤答作り直しの試行ごとの生出力が残っていないため、生出力からの再現は不可。このファイル自体を正とする",
    "generation": "LLM 生成は seed を指定しても完全一致は保証されない。再現性の基準は保存した生出力からの後処理の再現とする"
   },
-  "timing": "初回生成の所要時間は計測していない（計測処理の追加は生成後）。コスト算出には、同日に build_qa.py で全工程を別出力先に再実行して測った値を使う",
-  "hub": {"repo": "yasutoshi-lab/eng-textbook-sft-ja", "uploaded_revision": "69869ebcdedcdbb69a7e6cb19c619ca921283904"}
+  "timing": "初回生成の所要時間は計測していない（計測処理の追加は生成後）。同日、修正版 build_qa.py で全工程を別出力先（artifacts/qa_rerun）に再実行して測った値をコスト算出に使う",
+  "hub": {
+   "repo": "yasutoshi-lab/eng-textbook-sft-ja",
+   "uploaded_revision": "69869ebcdedcdbb69a7e6cb19c619ca921283904"
+  },
+  "timing_remeasured": {
+   "date": "2026-10-04",
+   "host": "ws3-arc GPU1（同じ vLLM 構成・モデル revision）",
+   "concurrency": 48,
+   "generation_seconds": {
+    "mcq": 42.9,
+    "sft": 208.0
+   },
+   "note": "step_seconds の sft は打ち切り不具合の修正後に残り 1 チャンクを生成した分のみ。sft の生成時間は generation_seconds（各ラウンドの合計）を使う。vLLM の起動時間（約 2 分）は含まない",
+   "rerun_outputs": {
+    "sft_final": 6577,
+    "mcq_final_after_rebalance": 765
+   },
+   "rerun_note": "再実行の出力は件数・内容とも初回と異なる（LLM 生成の非決定性）。正式なデータは初回のもの。再実行分は生出力と検証キャッシュから --postprocess-only で 3 ファイルともバイト一致を確認",
+   "step_seconds": {
+    "mcq": 54.1,
+    "sft": 2.0,
+    "rebalance": 50.3
+   }
+  }
  }
 }

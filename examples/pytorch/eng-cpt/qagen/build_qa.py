@@ -77,13 +77,14 @@ def run_task(task, args):
         RuntimeError: 再試行しても未生成のチャンクが残った場合。
     """
     ns = argparse.Namespace(task=task, base_url=args.base_url, concurrency=args.concurrency, limit=0,
-                            postprocess_only=args.postprocess_only)
+                            postprocess_only=args.postprocess_only, attempt=0)
     if args.postprocess_only:
         asyncio.run(generate_qa.run(ns))
         return
     # 各ラウンドで未生成チャンクだけを生成し後処理まで行う（自己検証はキャッシュされるので重複しない）
     for round_ in range(1, args.max_rounds + 1):
         print(f"[{task}] generation round {round_}", flush=True)
+        ns.attempt = round_ - 1
         asyncio.run(generate_qa.run(ns))
         if todo_count(task) == 0:
             return
@@ -145,7 +146,8 @@ def main():
                     choices=["mcq", "sft", "rebalance", "manifest"])
     ap.add_argument("--base-url", default="http://localhost:8010/v1")
     ap.add_argument("--concurrency", type=int, default=48)
-    ap.add_argument("--max-rounds", type=int, default=3, help="失敗チャンクの再試行を含む生成の最大回数")
+    # 反復ループで打ち切られやすいチャンクがある（実測で 1 チャンク 7.5%）ため、seed を変えて最大 5 回まで試す
+    ap.add_argument("--max-rounds", type=int, default=5, help="失敗チャンクの再試行を含む生成の最大回数")
     ap.add_argument("--postprocess-only", action="store_true", help="LLM を呼ばず、生出力とキャッシュから作り直す")
     ap.add_argument("--history", default=None, help="実際の作成経緯を記した JSON（manifest に取り込む）")
     ap.add_argument("--vllm-image-id", default=None, help="vLLM イメージが無いホストで manifest を作る場合に指定")
