@@ -7,6 +7,8 @@ Aggregate eval results and training logs into report tables.
        4 択と JMMLU には問題単位のブートストラップによる 95% 信頼区間を付ける
     2. Base との差（同じ問題での正誤を対にしたブートストラップ。区間が 0 を跨がなければ差ありとみなす）
     3. CPT の量の曲線（train 使用率 × エポック → 学習トークン数・GPU 時間・各指標）
+    3b. 追加評価: holdout 4 択（CPT で読ませていない範囲。CPT の効果が暗記か一般化かの切り分け）、
+        JMMLU cloze 方式（記号回答の形式崩れと忘却の切り分け）、MMLU-Pro（Base のみ）
     4. コスト（GPU 時間 × ``--gpu-hour-price``。単価を渡さない場合は GPU 時間のみ）
        QA 生成・学習・評価（モデル読み込みを含む実測時間）を工程別に積み上げ、全体の合計も出す
 
@@ -191,6 +193,90 @@ def main_table(lines, out):
     out["deltas_vs_base"] = deltas
 
 
+def load_sub(sub, name):
+    """``artifacts/eval/<sub>/<name>.json`` を読む（無ければ ``None``）.
+
+    Args:
+        sub (str): サブディレクトリ名。
+        name (str): 評価名。
+
+    Returns:
+        dict | None: 評価結果。
+    """
+    path = EVAL_DIR / sub / f"{name}.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def extra_tables(lines, out):
+    """holdout 4 択・JMMLU cloze・MMLU-Pro の表を作る.
+
+    Args:
+        lines (list[str]): Markdown 行の追加先。
+        out (dict): JSON 出力の追加先。
+
+    Returns:
+        None
+    """
+    labels = list(MAIN_CONDITIONS)
+    # holdout 4 択: qa_eval 由来と並べ、CPT の上乗せを比較する
+    hold = {k: load_sub("holdout_mcq", v) for k, v in MAIN_CONDITIONS.items()}
+    if all(hold.values()):
+        main = {k: load_eval(v) for k, v in MAIN_CONDITIONS.items()}
+        lines += ["", "## 追加: CPT で読ませた範囲（qa_eval）と読ませていない範囲（holdout）の 4 択", "",
+                  "| 比較 | qa_eval（761問）[95%CI] | holdout（765問）[95%CI] |", "|---|---|---|"]
+        rows = {}
+        for title, a, b in [("Base の正解率", None, "Base"), ("CPT 単独（CPT − Base）", "Base", "Base+CPT"),
+                            ("SFT 単独（SFT − Base）", "Base", "Base+SFT"), ("CPT+SFT − Base", "Base", "Base+CPT+SFT"),
+                            ("CPT の上乗せ（CPT+SFT − SFT）", "Base+SFT", "Base+CPT+SFT")]:
+            cells = []
+            for src in (main, hold):
+                if a is None:
+                    v = correctness(src[b], "mcq")
+                    cells.append(f"{pct(sum(v) / len(v))}")
+                else:
+                    d = paired_delta(correctness(src[a], "mcq"), correctness(src[b], "mcq"))
+                    cells.append(fmt_ci(*d, signed=True))
+                    rows.setdefault(title, []).append(d)
+            lines.append(f"| {title} | {cells[0]} | {cells[1]} |")
+        out["holdout_vs_qa_eval"] = rows
+    # JMMLU: 記号方式と cloze 方式
+    cloze = {k: load_sub("jmmlu_cloze", v) for k, v in MAIN_CONDITIONS.items()}
+    if all(cloze.values()):
+        main = {k: load_eval(v) for k, v in MAIN_CONDITIONS.items()}
+        vec = lambda r, key: [int(p[key] == p["answer"]) for p in r["jmmlu_cloze"]["predictions"]]  # noqa: E731
+        lines += ["", "## 追加: JMMLU の記号方式と cloze 方式（忘却と解答形式の崩れの切り分け）", "",
+                  "| 条件 | 記号方式 acc | Base との差 [95%CI] | 最頻の記号の割合 | cloze acc | Base との差 [95%CI] | cloze acc_norm | Base との差 [95%CI] |",
+                  "|---|---|---|---|---|---|---|---|"]
+        res = {}
+        for k in labels:
+            letter = correctness(main[k], "jmmlu")
+            preds = [p["pred"] for p in main[k]["jmmlu"]["predictions"]]
+            top = max(preds.count(x) for x in "ABCD") / len(preds)
+            c, cn = vec(cloze[k], "pred"), vec(cloze[k], "pred_norm")
+            if k == "Base":
+                d1 = d2 = d3 = None
+                cells = ["—", "—", "—"]
+            else:
+                d1 = paired_delta(correctness(main["Base"], "jmmlu"), letter)
+                d2 = paired_delta(vec(cloze["Base"], "pred"), c)
+                d3 = paired_delta(vec(cloze["Base"], "pred_norm"), cn)
+                cells = [fmt_ci(*d1, signed=True), fmt_ci(*d2, signed=True), fmt_ci(*d3, signed=True)]
+            lines.append(f"| {k} | {pct(sum(letter) / len(letter))} | {cells[0]} | {pct(top)} | {pct(sum(c) / len(c))} | "
+                         f"{cells[1]} | {pct(sum(cn) / len(cn))} | {cells[2]} |")
+            res[k] = {"letter": d1, "cloze": d2, "cloze_norm": d3, "top_letter_ratio": top}
+        out["jmmlu_letter_vs_cloze"] = res
+    # MMLU-Pro
+    mp = load_sub("mmlupro", "base")
+    if mp:
+        m = mp["mmlu_pro"]
+        lo_hi = bootstrap_ci([int(p["pred"] == p["answer"]) for p in m["predictions"]])
+        lines += ["", f"## 追加: MMLU-Pro（Base・同分野 5-shot・尤度方式。公式の 5-shot CoT とは比較不可）", "",
+                  f"全体 {fmt_ci(*lo_hi)}（{m['n']:,} 問）", "", "| 分野 | 正解率 | 問題数 |", "|---|---|---|"]
+        for cat, v in sorted(m["by_category"].items(), key=lambda kv: -kv[1]["acc"]):
+            lines.append(f"| {cat} | {pct(v['acc'])} | {v['n']} |")
+        out["mmlu_pro_base"] = {"acc": lo_hi, "by_category": m["by_category"]}
+
+
 def curve_table(lines, out, price, currency):
     """CPT の量の曲線（使用率 × エポック）の表を作る.
 
@@ -286,6 +372,8 @@ def eval_kind(path):
         return "追加: JMMLU cloze 方式"
     if rel.parts[0] == "mmlupro":
         return "追加: MMLU-Pro"
+    if rel.parts[0] == "holdout_mcq":
+        return "追加: holdout 4択"
     return "主実験・量の曲線（PPL / 自作4択 / JMMLU）"
 
 
@@ -394,6 +482,7 @@ def main():
     lines, out = ["# eng-cpt 実験結果", ""], {"gpu_hour_price": args.gpu_hour_price, "currency": args.currency}
     main_table(lines, out)
     curve_table(lines, out, args.gpu_hour_price, args.currency)
+    extra_tables(lines, out)
     cost_table(lines, out, args.gpu_hour_price, args.currency)
     total_cost_table(lines, out, args.gpu_hour_price, args.currency)
     if args.storage_gb and args.storage_price:
