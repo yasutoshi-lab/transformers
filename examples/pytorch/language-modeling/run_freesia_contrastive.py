@@ -119,6 +119,8 @@ def load_sources(cfg: dict, rng: random.Random) -> list[dict]:
     ja_files = {}
     for path in glob.glob(os.path.join(HF_HUB, "datasets--cl-nagoya--ruri-v3-dataset-ft/snapshots/*/*/*.parquet")):
         ja_files.setdefault(Path(path).parent.name, []).append(path)
+    if cfg.get("ja_sources") == []:  # weak-only run (stage 3)
+        ja_files = {}
     for name in sorted(ja_files):
         if cfg.get("ja_sources") and name not in cfg["ja_sources"]:
             continue
@@ -134,6 +136,8 @@ def load_sources(cfg: dict, rng: random.Random) -> list[dict]:
     # English: codefuse-ai/F2LLM (query / passage / negative_1..n)
     en_paths = [p for p in sorted(glob.glob(os.path.join(HF_HUB, "datasets--codefuse-ai--F2LLM/snapshots/*/*.parquet")))
                 if not cfg.get("en_sources") or Path(p).stem in cfg["en_sources"]]
+    if cfg.get("en_sources") == []:  # weak-only run (stage 3)
+        en_paths = []
     cap_all = cfg.get("max_rows_per_source", 200_000)
     en_total = sum(min(pq.ParquetFile(p).metadata.num_rows, cap_all) for p in en_paths)
     # keep each row with probability p while reading, so large runs never hold the full corpus in RAM
@@ -166,9 +170,63 @@ def load_sources(cfg: dict, rng: random.Random) -> list[dict]:
             for s in group:
                 keep = max(1, int(len(s["rows"]) * budget / total))
                 s["rows"] = rng.sample(s["rows"], min(keep, len(s["rows"])))
+    sources += load_weak_sources(cfg, rng)
     sources = [s for s in sources if len(s["rows"]) >= cfg["batch_queries"]]
     for s in sources:
         print(f"source {s['name']:<40} kind={s['kind']:<14} rows={len(s['rows']):,}", flush=True)
+    return sources
+
+
+WEAK_NLI = {"auto-wiki-nli", "jsnli"}
+
+
+def load_weak_sources(cfg: dict, rng: random.Random) -> list[dict]:
+    """Load weakly supervised (anchor, positive) pairs from cl-nagoya/ruri-dataset-v2-pt (stage 3).
+
+    弱教師ペアには負例が無いので、in-batch negative だけで学習する（全ソース inbatch=True）。
+    `weak_sources` はサブセット名 → 上限件数、`weak_queries` は全体の件数予算（上限の比で配分）。
+    メモリを抑えるため、各サブセットは読みながら確率 p で間引き、上限に達したら読むのをやめる。
+
+    Args:
+        cfg (dict): Config with `weak_sources` (dict[str, int]) and optional `weak_queries` / `max_chars`.
+        rng (random.Random): RNG used for subsampling.
+
+    Returns:
+        list[dict]: Sources with `name`, `kind`, `lang`, `inbatch`, `rows` (negatives are empty lists).
+    """
+    spec = cfg.get("weak_sources") or {}
+    if not spec:
+        return []
+    files = {}
+    for path in glob.glob(os.path.join(HF_HUB, "datasets--cl-nagoya--ruri-dataset-v2-pt/snapshots/*/*/*.parquet")):
+        files.setdefault(Path(path).parent.name, []).append(path)
+    budget = cfg.get("weak_queries")
+    scale = min(1.0, budget / sum(spec.values())) if budget else 1.0
+    max_chars = cfg.get("max_chars")
+    sources = []
+    for name, cap in spec.items():
+        paths = sorted(files.get(name, []))
+        if not paths:
+            print(f"[weak] subset {name} not found in the HF cache, skipped", flush=True)
+            continue
+        want = int(cap * scale)
+        total = sum(pq.ParquetFile(p).metadata.num_rows for p in paths)
+        keep_p = min(1.0, want / total) if total else 1.0
+        rows = []
+        for p in rng.sample(paths, len(paths)):
+            for batch in pq.ParquetFile(p).iter_batches(batch_size=8192, columns=["anc", "pos"]):
+                for r in batch.to_pylist():
+                    if keep_p < 1.0 and rng.random() >= keep_p:
+                        continue
+                    if r["anc"] and r["pos"] and r["anc"] != r["pos"]:
+                        pos = r["pos"][:max_chars] if max_chars else r["pos"]
+                        rows.append((r["anc"], pos, []))
+                if len(rows) >= want:
+                    break
+            if len(rows) >= want:
+                break
+        kind = "nli" if name in WEAK_NLI else "retrieval"
+        sources.append({"name": f"weak/{name}", "kind": kind, "lang": "ja", "inbatch": True, "rows": rows[:want]})
     return sources
 
 
@@ -183,25 +241,38 @@ class Batcher:
         self.probs = sizes / sizes.sum()
         self.steps_per_epoch = int(sizes.sum() // batch_queries)
 
-    def get(self, step: int, k_neg: int):
+    def get(self, step: int, k_neg: int, k_by_kind: dict | None = None):
+        """Return one task-homogeneous batch.
+
+        `k_by_kind` で種類ごとに負例数を上書きできる（例: classification は 1。少ない負例を他の行の
+        正例で水増しすると勾配が跳ねるため）。in-batch のソースでは正例・クエリの重複を避ける
+        （同じ文書が 2 回入ると互いに偽負例になる）。
+        """
         rng = np.random.default_rng(self.seed * 1_000_003 + step)
         si = rng.choice(len(self.sources), p=self.probs)
         src = self.sources[si]
-        idx = rng.choice(len(src["rows"]), size=self.bq, replace=False)
-        qs, docs = [], []
-        for i in idx:
-            q, p, negs = src["rows"][i]
+        k = (k_by_kind or {}).get(src["kind"], k_neg)
+        rows = src["rows"]
+        cand = rng.choice(len(rows), size=min(len(rows), self.bq * 2), replace=False)
+        qs, docs, seen = [], [], set()
+        for i in cand:
+            q, p, negs = rows[i]
+            if src["inbatch"] and (p in seen or q in seen):
+                continue
+            seen.update((p, q))
             negs = [n for n in negs if n and n != p]
-            if len(negs) >= k_neg:
-                pick = [negs[j] for j in rng.choice(len(negs), size=k_neg, replace=False)]
+            if len(negs) >= k:
+                pick = [negs[j] for j in rng.choice(len(negs), size=k, replace=False)] if k else []
             else:  # pad with negatives borrowed from other rows of the same source
                 pick = list(negs)
-                while len(pick) < k_neg:
-                    other = src["rows"][rng.integers(len(src["rows"]))][1]
+                while len(pick) < k:
+                    other = rows[rng.integers(len(rows))][1]
                     if other != p:
                         pick.append(other)
             qs.append(q)
             docs.append([p] + pick)
+            if len(qs) == self.bq:
+                break
         return src, qs, docs
 
 
@@ -310,14 +381,14 @@ def main() -> None:
     floor_steps = max(1, int(max_steps * cfg.get("floor_warmup_ratio", 0.2)))
     log = open(out / "train_log.jsonl", "a")
     last_save, t0 = time.time(), time.time()
-    k1 = 1 + cfg["k_neg"]
     while step < max_steps:
         lr = cfg["lr"] * (step + 1) / warm if step < warm else cfg["lr"] * 0.5 * (1 + math.cos(math.pi * (step - warm) / max(1, max_steps - warm)))
         for g in opt.param_groups:
             g["lr"] = lr * g["lr_mult"]
         model.bloom_floor = cfg.get("floor_max", 0.3) * min(1.0, step / floor_steps)
 
-        src, qs, docs = batcher.get(step, cfg["k_neg"])
+        src, qs, docs = batcher.get(step, cfg["k_neg"], cfg.get("k_neg_by_kind"))
+        k1 = len(docs[0])
         instr = INSTRUCTIONS[f"{src['kind']}_{src['lang']}"]
         qb = tokenize(tok, qs, f"Instruct: {instr}\nQuery:", cfg["max_query_len"])
         db = tokenize(tok, [x for group in docs for x in group], "", cfg["max_doc_len"])

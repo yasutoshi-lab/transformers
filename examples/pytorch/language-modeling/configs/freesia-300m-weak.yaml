@@ -1,0 +1,42 @@
+# freesia-300m-weak: stage 3 weakly supervised contrastive pretraining (design §6 / §4.2)
+# Curator decision (2026-10-08): Bloom fixed closed (best in the long check), Bloom learning deferred; pooling = mean.
+init_from: artifacts/runs/freesia-300m-lm/final
+tokenizer: artifacts/tokenizer/v32k
+output_dir: artifacts/runs/freesia-300m-weak
+init_embed_mode_from: lm
+bloom_override: closed
+pooling_mode: mean
+ja_sources: []
+en_sources: []
+weak_sources:            # cl-nagoya/ruri-dataset-v2-pt subset -> cap (retrieval/QA first, then title->text)
+  wiki-qa: 1500000
+  wiki-para-qa: 1500000
+  mqa: 1000000
+  jawiki-hyperlinks: 1000000
+  auto-wiki-nli: 198000
+  jsnli: 176000
+  wiki-summary-title2text: 1000000
+  wiki-para-title2text: 500000
+  kaken-title2summary: 1000000
+  warp-html-title2summary: 800000
+  cc-news-topic: 400000
+  jrc-title2para: 400000
+weak_queries: 3000000
+batch_queries: 2048
+k_neg: 0
+max_query_len: 128
+max_doc_len: 256
+chunk: 256
+temperature: 0.05
+false_neg_margin: 0.1
+focal_gamma: 0.0
+lr: 1.0e-4
+warmup_ratio: 0.05
+weight_decay: 0.01
+epochs: 1
+seed: 42
+log_every: 10
+save_minutes: 30
+gradient_checkpointing: true
+max_chars: 1200
+min_available_gb: 8.0
