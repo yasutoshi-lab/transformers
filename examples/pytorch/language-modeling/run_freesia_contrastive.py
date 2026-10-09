@@ -345,8 +345,9 @@ def main() -> None:
     ckpt = out / "checkpoint-latest"
     resume = ckpt.exists()
     model = FreesiaModel.from_pretrained(ckpt if resume else cfg["init_from"], torch_dtype=torch.float32)
-    if not resume:
-        src_mode = {"masked": MODE_MASKED, "lm": MODE_LM}[cfg.get("init_embed_mode_from", "masked")]
+    embed_src = cfg.get("init_embed_mode_from", "masked")  # null: keep the trained embed mode (stage 4 from stage 3)
+    if not resume and embed_src:
+        src_mode = {"masked": MODE_MASKED, "lm": MODE_LM}[embed_src]
         with torch.no_grad():
             model.mode_embed.weight[MODE_EMBED] = model.mode_embed.weight[src_mode]
             if cfg.get("bloom_logit_init") is not None:  # re-initialize the (never trained) gates

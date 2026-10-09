@@ -1,0 +1,33 @@
+# freesia-300m-sup: stage 4 supervised contrastive training (design §6) of Freesia-300M, mainstream configuration.
+# Starts from the stage 3 model (freesia-300m-weak), Bloom fixed closed, mean pooling (Curator decision 2026-10-08).
+# Data = the long check (ja all + en 1.5M, 400k cap per source, hard negatives); classification uses 1 negative (no padding).
+init_from: artifacts/runs/freesia-300m-weak/final
+tokenizer: artifacts/tokenizer/v32k
+output_dir: artifacts/runs/freesia-300m-sup
+init_embed_mode_from: null     # keep the embed mode trained in stage 3
+bloom_override: closed
+pooling_mode: mean
+ja_queries: null
+en_queries: 1500000
+max_rows_per_source: 400000
+batch_queries: 512
+k_neg: 7
+k_neg_by_kind:
+  classification: 1
+max_query_len: 128
+max_doc_len: 256
+chunk: 256
+temperature: 0.05
+false_neg_margin: 0.1
+focal_gamma: 0.5
+lr: 5.0e-5
+warmup_ratio: 0.05
+weight_decay: 0.01
+epochs: 1
+seed: 42
+log_every: 10
+save_minutes: 30
+gradient_checkpointing: true
+max_chars: 1200
+max_neg_pool: 12
+min_available_gb: 8.0
