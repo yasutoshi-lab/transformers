@@ -1,0 +1,11 @@
+[project]
+name = "self-distillation-dataset"
+version = "0.1.0"
+description = "gpt-oss-20b 自身による自己蒸留データセット生成パイプライン（vLLM 経由）"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32",
+    "transformers>=4.57",
+    "datasets>=3.0",
+    "datasketch>=1.6",
+]
