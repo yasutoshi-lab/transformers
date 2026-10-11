@@ -186,4 +186,5 @@ test-results/
 
 
 # custom ignore directory
+examples/pytorch/language-modeling/wandb/*
 examples/pytorch/language-modeling/artifact*/
