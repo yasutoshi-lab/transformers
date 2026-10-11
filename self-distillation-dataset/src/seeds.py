@@ -214,19 +214,33 @@ class SeedPool:
         return text, idx, source
 
 
-def sample_prefix(domain: str, mode: str, rng: random.Random) -> str:
+def _is_japanese_text(text: str) -> bool:
+    """仮名・漢字を含むかを判定する。"""
+    return any("\u3040" <= c <= "\u30ff" or "\u4e00" <= c <= "\u9fff" for c in text)
+
+
+def sample_prefix(domain: str, mode: str, rng: random.Random, prompt: str = "") -> str:
     """書き出しプレフィックスを 1 件サンプリングする。
+
+    no_reasoning の書き出しは final チャネルの言語を決めるため、プロンプトの言語に
+    合わせた候補から選ぶ（英語プロンプトに日本語 prefix を付けると応答が日本語になり
+    language_mixed で落ちる）。japanese 域は域の定義上、日本語 prefix を使う。
 
     Args:
         domain: 対象ドメイン。
         mode: "reasoning" / "no_reasoning"。
         rng: 乱数生成器。
+        prompt: 元プロンプト（no_reasoning の言語合わせに使う）。
 
     Returns:
         書き出し文字列。
     """
-    table = REASONING_PREFIX_POOLS if mode == "reasoning" else PREFIX_POOLS
-    return rng.choice(table[domain])
+    if mode == "reasoning":
+        return rng.choice(REASONING_PREFIX_POOLS[domain])
+    pool = PREFIX_POOLS[domain]
+    want_ja = domain == "japanese" or _is_japanese_text(prompt)
+    matched = [p for p in pool if _is_japanese_text(p) == want_ja]
+    return rng.choice(matched or pool)
 
 
 def sample_effort(rng: random.Random) -> str:

@@ -61,6 +61,15 @@ END_TOKEN = "<|end|>"
 # これらを含むレコードは行読み取り（splitlines）で分断される。生成側で置換する。
 LINE_SEPARATORS = dict.fromkeys([0x2028, 0x2029, 0x0085, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E], " ")
 
+# japanese 域は域の定義が「日本語で答える」ため、プロンプトが英語でも日本語で答えさせる。
+# 数式のみの短い応答（too_short）を避けるため、説明を添えるよう指示する。
+JAPANESE_SYSTEM_PROMPT = (
+    "You are a helpful assistant. "
+    "Reason in English in the analysis channel. "
+    "Always answer in Japanese, even if the user's request is in English, "
+    "and include a brief explanation rather than only the final result."
+)
+
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful assistant. "
     "Reason in English in the analysis channel. "
@@ -294,7 +303,7 @@ def run(args: argparse.Namespace) -> dict:
                         seen.add(key)
                         effort = seeds.sample_effort(rng) if mode == "reasoning" else ""
                         candidates.append(
-                            (prompt, seed_index, seed_source, effort, seeds.sample_prefix(domain, mode, rng))
+                            (prompt, seed_index, seed_source, effort, seeds.sample_prefix(domain, mode, rng, prompt))
                         )
                     if not candidates:
                         break
@@ -324,7 +333,7 @@ def run(args: argparse.Namespace) -> dict:
                                 effort,
                                 limit(effort),
                                 args.timeout,
-                                args.system_prompt,
+                                JAPANESE_SYSTEM_PROMPT if domain == "japanese" else args.system_prompt,
                             )
                             for prompt, seed_index, seed_source, effort, prefix in candidates
                         ]
@@ -387,7 +396,7 @@ def main() -> None:
     parser.add_argument("--served-model-name", default="gpt-oss-20b", help="vLLM の served model name")
     parser.add_argument("--output", default="out/pilot.jsonl")
     parser.add_argument("--concurrency", type=int, default=8)
-    parser.add_argument("--max-tokens", type=int, default=2048, help="no_reasoning モードの生成上限")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="no_reasoning モードの生成上限")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--chunk-size", type=int, default=1000, help="flush・進捗表示の interval")
     parser.add_argument("--dedup-threshold", type=float, default=0.80)

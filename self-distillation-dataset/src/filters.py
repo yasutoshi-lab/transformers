@@ -42,6 +42,9 @@ MIN_RESPONSE_CHARS = MIN_RESPONSE_CHARS_BY_DOMAIN["default"]
 _WS = re.compile(r"\s+")
 _FENCE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`[^`\n]+`")
+# LaTeX 数式（\[..\] / \(..\) / $$..$$ / $..$）。\text{} 内の語や変数がラテン文字として
+# 計上され、日本語の解説でも latin_ratio で落ちるため、言語判定から外す
+_MATH = re.compile(r"\\\[.*?\\\]|\\\(.*?\\\)|\$\$.*?\$\$|\$[^$\n]+\$", re.DOTALL)
 
 
 def strip_code_blocks(text: str) -> str:
@@ -57,6 +60,7 @@ def strip_code_blocks(text: str) -> str:
         コード部分を除したテキスト。
     """
     text = _FENCE.sub(" ", text or "")
+    text = _MATH.sub(" ", text)
     return _INLINE_CODE.sub(" ", text)
 
 
@@ -114,8 +118,9 @@ def is_language_mixed(prompt: str, response: str, domain: str = "") -> tuple[boo
     Returns:
         (混入フラグ, 理由文字列)。混入でない場合は (False, "")。
     """
-    expected = detect_language(prompt)
-    body = strip_code_blocks(response) if domain == "code" else response
+    # japanese 域は域の定義そのものが「日本語で答える」ため、英語プロンプトでも ja 固定
+    expected = "ja" if domain == "japanese" else detect_language(prompt)
+    body = strip_code_blocks(response) if domain in ("code", "japanese", "math") else response
     counts = script_counts(body)
     letters = sum(counts.values())
     if letters == 0:
