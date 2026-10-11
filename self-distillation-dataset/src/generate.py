@@ -205,27 +205,46 @@ def generate_one(
     }
 
 
-def load_seen(path: Path) -> set[str]:
-    """既存出力の (domain, mode, seed_index) キー集合を読む（resume 用）。
+def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Counter, int]:
+    """既存出力から resume 用の状態を復元する。
+
+    済みキーに加え、(domain, mode) 別の通過数を数え直し、全レコードを出力順に
+    deduper へ流して重複判定の index を再構築する。中断で末尾が書きかけの行は切り捨てる
+    （次の追記が壊れた行に連結されるのを防ぐ）。
 
     Args:
         path: 出力 JSONL。
+        deduper: 状態を復元する重複除去器。
 
     Returns:
-        済みキーの set。
+        (済みキーの set, (domain, mode) 別通過数, 既存レコード数)。
     """
     seen: set[str] = set()
+    kept: Counter = Counter()
     if not path.exists():
-        return seen
-    for line in path.read_text(encoding="utf-8").split("\n"):
+        return seen, kept, 0
+    raw = path.read_bytes()
+    if raw and not raw.endswith(b"\n"):
+        cut = raw.rfind(b"\n") + 1
+        with path.open("r+b") as fh:
+            fh.truncate(cut)
+        print(f"[resume] truncated partial tail ({len(raw) - cut} bytes)", flush=True)
+        raw = raw[:cut]
+    total = 0
+    for line in raw.decode("utf-8").split("\n"):
         if not line.strip():
             continue
         try:
             rec = json.loads(line)
         except json.JSONDecodeError:
             continue
-        seen.add(f"{rec.get('domain')}|{rec.get('mode')}|{rec.get('seed_index')}")
-    return seen
+        total += 1
+        domain, mode = rec.get("domain"), rec.get("mode")
+        seen.add(f"{domain}|{mode}|{rec.get('seed_index')}")
+        deduper.is_duplicate(domain, rec.get("prompt", ""), rec.get("response", ""))
+        if rec.get("passed") and not rec.get("duplicate"):
+            kept[(domain, mode)] += 1
+    return seen, kept, total
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -269,14 +288,21 @@ def run(args: argparse.Namespace) -> dict:
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    seen = load_seen(out_path)
     deduper = dedup.Deduplicator(threshold=args.dedup_threshold)
+    seen, kept_dm, resumed = load_state(out_path, deduper)
 
     stats: Counter = Counter()
     reason_counter: Counter = Counter()
     domain_mode: Counter = Counter()
     kept_by_domain: Counter = Counter()
     effort_counter: Counter = Counter()
+    for (d, _), c in kept_dm.items():
+        kept_by_domain[d] += c
+    stats["total"] = resumed
+    stats["kept"] = sum(kept_dm.values())
+    if resumed:
+        print(f"[resume] {resumed} records, kept {stats['kept']}", flush=True)
+    next_report = (stats["total"] // args.chunk_size + 1) * args.chunk_size
 
     with out_path.open("a", encoding="utf-8") as fh:
         for domain in domains:
@@ -285,10 +311,9 @@ def run(args: argparse.Namespace) -> dict:
             for domain, mode, count in tasks:
                 if count <= 0:
                     continue
-                target = kept_by_domain[domain] + count
                 generated = 0
                 cap = sampler.size(domain) * args.max_reuse
-                while kept_by_domain[domain] < target and generated < cap:
+                while kept_dm[(domain, mode)] < count and generated < cap:
                     batch = min(args.concurrency, cap - generated)
                     candidates = []
                     for _ in range(batch):
@@ -370,9 +395,16 @@ def run(args: argparse.Namespace) -> dict:
                             else:
                                 stats["kept"] += 1
                                 kept_by_domain[domain] += 1
-                    if stats["total"] % args.chunk_size == 0:
-                        fh.flush()
-                        print(f"[progress] total {stats['total']} kept {stats['kept']}", flush=True)
+                                kept_dm[(domain, mode)] += 1
+                    # バッチごとに flush し、中断時の損失を 1 バッチに抑える
+                    fh.flush()
+                    if stats["total"] >= next_report:
+                        next_report = (stats["total"] // args.chunk_size + 1) * args.chunk_size
+                        print(
+                            f"[progress] {time.strftime('%Y-%m-%d %H:%M:%S')} total {stats['total']} "
+                            f"kept {stats['kept']} ({domain}/{mode} {kept_dm[(domain, mode)]}/{count})",
+                            flush=True,
+                        )
         fh.flush()
 
     return {
