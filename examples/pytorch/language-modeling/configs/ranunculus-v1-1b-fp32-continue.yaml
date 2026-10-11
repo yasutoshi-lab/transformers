@@ -1,0 +1,82 @@
+# Ranunculus-v1-1B 追加事前学習（fp32 master weights による RMSNorm 修正）
+# =============================================================================
+# 背景: 元の PT（artifacts-0 / artifacts-1）は .to(torch.bfloat16) の純 bf16 学習で、
+#       141 個の RMSNorm weight が 1.0 のまま一度も更新されなかった。
+# 方針: checkpoint-40500 を fp32 で読み込み、新しい AdamW + bf16 autocast で短く追加学習する。
+#       optimizer.pt は bf16 状態のため再利用しない（--resume も使わない）。
+# 実行コマンド:
+#   cd examples/pytorch/language-modeling
+#   NCCL_IB_DISABLE=1 torchrun --nproc_per_node=2 run_ranunculus_continue.py \
+#       --config configs/ranunculus-v1-1b-fp32-continue.yaml
+# =============================================================================
+
+init_from: artifacts-0/checkpoints/ranunculus-1b/checkpoint-40500
+tokenizer_dir: artifacts-0/tokenizer
+attn_implementation: sdpa
+gradient_checkpointing: true
+
+data:
+  seq_len: 8192
+  num_epochs: 1
+  train_bins:
+    - artifacts-0/packed/train_en.bin
+    - artifacts-0/packed/train_ja.bin
+  val_bins:
+    en: artifacts-0/packed/val_en.bin
+    ja: artifacts-0/packed/val_ja.bin
+
+per_lang_eval_every: 250
+per_lang_eval_batch_size: 1
+per_lang_eval_max_batches: 64   # 元ランと同じ先頭 64 系列（比較用）。全体評価は eval_ranunculus_val.py で行う
+param_norm_every: 500
+tokens_per_sec_every: 100
+stale_param_every: 100
+
+training:
+  output_dir: artifacts-2/checkpoints/ranunculus-v1-1b-fp32-continue
+
+  # 有効バッチは元ランと同一: 4 × 8 × 2GPU × 8192 = 524,288 tokens/step
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 8
+
+  # 最適化（新規 AdamW。WD 除外リストは RanunculusTrainer が適用）
+  learning_rate: 1.0e-4
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  # WSD: warmup 200 → 一定 1e-4 → 最後 1,000 step で cosine 減衰して 1e-5
+  lr_scheduler_type: warmup_stable_decay
+  warmup_steps: 200
+  lr_scheduler_kwargs:
+    num_decay_steps: 1000
+    min_lr_ratio: 0.1
+
+  # 4,000 step × 524,288 = 約 2.1B tokens（元 PT 21.2B の約 10%）
+  max_steps: 4000
+
+  # 精度: fp32 master weights + bf16 autocast
+  bf16: true
+
+  save_strategy: steps
+  save_steps: 500
+  save_total_limit: 4
+
+  logging_strategy: steps
+  logging_steps: 10
+  report_to: wandb
+  run_name: ranunculus-v1-1b-fp32-continue
+  eval_strategy: "no"
+
+  # Camellia M5 で実績のある NCCL + NCCL_IB_DISABLE=1（環境変数で指定）
+  ddp_backend: nccl
+
+  seed: 42
+  data_seed: 1234   # 元ランと別のシャッフル順
+
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+
+final_dir: artifacts-2/models/ranunculus-v1-1b-fp32-continue
