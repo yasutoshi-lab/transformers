@@ -1,0 +1,66 @@
+# Ranunculus-v1-1B DPO（全パラメータ、fp32 master weights + bf16 autocast）
+# =============================================================================
+# 初期値・参照モデル: SFT v4（HF yasutoshi-lab/Ranunculus-v1-1B-SFT と同じ重み）
+# データ: yasutoshi-lab/ranunculus-dpo の quality_ok の組（英語＋採点を通った日本語訳）
+#         思考なしモード（enable_thinking=False）で prompt を作る。loss は応答部分（chosen / rejected＋<|im_end|>）の対数確率の和
+# 手法: 標準の DPO（sigmoid 損失、arXiv:2305.18290）。参照モデルの対数確率は学習前に一度だけ計算して保存
+# 忘却の監視: 事前学習の検証セット（先頭 64 系列）の loss を定期的に測る
+# =============================================================================
+
+init_from: artifacts-5/models/ranunculus-v1-1b-sft-v4
+attn_implementation: sdpa
+gradient_checkpointing: true
+beta: 0.1
+ref_batch_size: 8
+
+data:
+  train: artifacts-6/dpo-data/train
+  val: artifacts-6/dpo-data/validation
+
+pt_val:
+  seq_len: 8192
+  every: 50
+  max_batches: 64
+  bins:
+    en: artifacts-0/packed/val_en.bin
+    ja: artifacts-0/packed/val_ja.bin
+
+training:
+  output_dir: artifacts-6/checkpoints/ranunculus-v1-1b-dpo
+
+  # 有効バッチ 64 組 = 4 × 勾配累積 8 × GPU 2（1 組 = chosen と rejected の 2 系列）
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8
+  num_train_epochs: 2
+
+  learning_rate: 5.0e-7
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.1
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.0
+  max_grad_norm: 1.0
+
+  bf16: true
+
+  eval_strategy: steps
+  eval_steps: 50
+  save_strategy: steps
+  save_steps: 100
+  save_total_limit: 3
+
+  logging_strategy: steps
+  logging_steps: 5
+  report_to: wandb
+  run_name: ranunculus-v1-1b-dpo
+  ddp_backend: nccl
+  ddp_find_unused_parameters: false
+  remove_unused_columns: false
+
+  seed: 42
+  data_seed: 42
+  dataloader_num_workers: 2
+
+final_dir: artifacts-6/models/ranunculus-v1-1b-dpo
