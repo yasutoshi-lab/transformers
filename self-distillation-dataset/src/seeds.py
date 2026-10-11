@@ -214,7 +214,7 @@ class SeedPool:
         return text, idx, source
 
 
-def _is_japanese_text(text: str) -> bool:
+def is_japanese_text(text: str) -> bool:
     """仮名・漢字を含むかを判定する。"""
     return any("\u3040" <= c <= "\u30ff" or "\u4e00" <= c <= "\u9fff" for c in text)
 
@@ -238,8 +238,8 @@ def sample_prefix(domain: str, mode: str, rng: random.Random, prompt: str = "") 
     if mode == "reasoning":
         return rng.choice(REASONING_PREFIX_POOLS[domain])
     pool = PREFIX_POOLS[domain]
-    want_ja = domain == "japanese" or _is_japanese_text(prompt)
-    matched = [p for p in pool if _is_japanese_text(p) == want_ja]
+    want_ja = domain == "japanese" or is_japanese_text(prompt)
+    matched = [p for p in pool if is_japanese_text(p) == want_ja]
     return rng.choice(matched or pool)
 
 

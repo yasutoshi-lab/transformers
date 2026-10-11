@@ -61,14 +61,10 @@ END_TOKEN = "<|end|>"
 # これらを含むレコードは行読み取り（splitlines）で分断される。生成側で置換する。
 LINE_SEPARATORS = dict.fromkeys([0x2028, 0x2029, 0x0085, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E], " ")
 
-# japanese 域は域の定義が「日本語で答える」ため、プロンプトが英語でも日本語で答えさせる。
-# 数式のみの短い応答（too_short）を避けるため、説明を添えるよう指示する。
-JAPANESE_SYSTEM_PROMPT = (
-    "You are a helpful assistant. "
-    "Reason in English in the analysis channel. "
-    "Always answer in Japanese, even if the user's request is in English, "
-    "and include a brief explanation rather than only the final result."
-)
+# japanese 域は域の定義が「日本語で答える」。seed が英語プロンプトでも、言語指示は隠れた
+# system ではなくユーザープロンプト末尾に付けて record に残す（thinking が存在しない
+# system 指示を引用すると、学習時に再現できない特権情報になるため）。
+JAPANESE_USER_SUFFIX = "\n\n日本語で、簡単な説明を添えて答えてください。"
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful assistant. "
@@ -297,6 +293,8 @@ def run(args: argparse.Namespace) -> dict:
                     candidates = []
                     for _ in range(batch):
                         prompt, seed_index, seed_source = sampler.sample(domain)
+                        if domain == "japanese" and not seeds.is_japanese_text(prompt):
+                            prompt += JAPANESE_USER_SUFFIX
                         key = f"{domain}|{mode}|{seed_index}"
                         if key in seen:
                             continue
@@ -333,7 +331,7 @@ def run(args: argparse.Namespace) -> dict:
                                 effort,
                                 limit(effort),
                                 args.timeout,
-                                JAPANESE_SYSTEM_PROMPT if domain == "japanese" else args.system_prompt,
+                                args.system_prompt,
                             )
                             for prompt, seed_index, seed_source, effort, prefix in candidates
                         ]

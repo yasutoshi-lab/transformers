@@ -144,20 +144,30 @@ def is_language_mixed(prompt: str, response: str, domain: str = "") -> tuple[boo
     return False, ""
 
 
-def thinking_is_english(thinking: str) -> bool:
-    """思考チャネルが英語のみで書かれているかを判定する。
+_QUOTED = re.compile(r"「[^」]*」|『[^』]*』|\"[^\"\n]*\"|“[^”\n]*”")
+# 引用符外の thinking に許す仮名・漢字の割合（下書きの数語など）。Curator 判断 2026-10-11
+THINKING_JA_RATIO_LIMIT = 0.03
 
-    Curator 方針（2026-10-10）: reasoning ありモードの `analysis` は英語 only に統一する。
-    したがって仮名・漢字が 1 文字でも含まれる場合は不合格とする。
+
+def thinking_is_english(thinking: str) -> bool:
+    """思考チャネルが実質英語のみで書かれているかを判定する。
+
+    Curator 方針: reasoning ありモードの `analysis` は英語 only に統一する。
+    ただし japanese 域では、プロンプト中の日本語語句や下書きが thinking に現れるため、
+    引用符・コード内の日本語は除外し、引用符外の仮名・漢字が
+    `THINKING_JA_RATIO_LIMIT` 以下なら英語とみなす。
 
     Args:
         thinking: 思考チャネル本文。
 
     Returns:
-        英語のみなら True。
+        実質英語のみなら True。
     """
-    counts = script_counts(thinking)
-    return counts["hiragana"] + counts["katakana"] + counts["kanji"] == 0
+    body = _QUOTED.sub(" ", strip_code_blocks(thinking))
+    counts = script_counts(body)
+    ja = counts["hiragana"] + counts["katakana"] + counts["kanji"]
+    total = sum(counts.values())
+    return total == 0 or ja / total <= THINKING_JA_RATIO_LIMIT
 
 
 _JUNK_CHARS = set("…・-–—”“\"?.")
@@ -181,6 +191,17 @@ def head_is_junk(text: str) -> bool:
         return True
     junk = sum(1 for c in head if c in _JUNK_CHARS)
     return junk / len(head) > JUNK_HEAD_RATIO_LIMIT
+
+
+# thinking が隠れた指示（system / developer）を引用していないか。学習時に存在しない指示への言及は除く
+_INSTRUCTION_CITE = re.compile(
+    r"developer (?:instruction|message|says|said|wants)|system (?:prompt|message|instruction)|"
+    r"per (?:the )?(?:developer |system )?instruction|the instruction says|instructed to|"
+    r"Reason in English|analysis channel|language of the user'?s request",
+    re.IGNORECASE,
+)
+# no_reasoning の応答に英語の推論（We need to ...）が混入していないか
+_ENGLISH_COT = re.compile(r"\bWe (?:need|should|have to|must|can|could) (?:to )?[a-z]")
 
 
 @dataclass
@@ -244,5 +265,9 @@ def evaluate(record: dict) -> FilterResult:
             reasons.append("thinking_not_english")
         elif head_is_junk(thinking):
             reasons.append("junk_thinking_head")
+        elif _INSTRUCTION_CITE.search(thinking):
+            reasons.append("thinking_cites_instruction")
+    elif record.get("mode") == "no_reasoning" and _ENGLISH_COT.search(strip_code_blocks(response)):
+        reasons.append("english_cot_leak")
 
     return FilterResult(passed=not reasons, reasons=reasons)
