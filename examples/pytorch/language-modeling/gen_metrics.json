@@ -1,0 +1,930 @@
+{
+  "before": {
+    "en/reference": {
+      "n": 200,
+      "len": 256.0,
+      "early_eos": 0.0,
+      "rep4": 0.024229249011857704,
+      "loop": 0.0,
+      "distinct1": 0.20373046875,
+      "distinct2": 0.6556470588235294,
+      "lang_ok": 0.9982156046082554
+    },
+    "en/greedy": {
+      "n": 200,
+      "len": 244.58,
+      "early_eos": 0.08,
+      "rep4": 0.5306802908083399,
+      "loop": 0.585,
+      "distinct1": 0.07866546733175239,
+      "distinct2": 0.21514492158633713,
+      "lang_ok": 0.9987118271584605
+    },
+    "en/sample": {
+      "n": 200,
+      "len": 234.12,
+      "early_eos": 0.225,
+      "rep4": 0.06846560117412893,
+      "loop": 0.005,
+      "distinct1": 0.15993934734324278,
+      "distinct2": 0.5178448867536033,
+      "lang_ok": 0.9974746353707633
+    },
+    "ja/reference": {
+      "n": 200,
+      "len": 256.0,
+      "early_eos": 0.0,
+      "rep4": 0.030711462450592877,
+      "loop": 0.0,
+      "distinct1": 0.306171875,
+      "distinct2": 0.7802941176470588,
+      "lang_ok": 0.9305972762611328
+    },
+    "ja/greedy": {
+      "n": 200,
+      "len": 245.19,
+      "early_eos": 0.085,
+      "rep4": 0.6168359903128738,
+      "loop": 0.725,
+      "distinct1": 0.07147518251152167,
+      "distinct2": 0.16489209222326875,
+      "lang_ok": 0.9342658811817829
+    },
+    "ja/sample": {
+      "n": 200,
+      "len": 223.93,
+      "early_eos": 0.29,
+      "rep4": 0.12392680388687109,
+      "loop": 0.02,
+      "distinct1": 0.2229044790782834,
+      "distinct2": 0.5739918360023326,
+      "lang_ok": 0.9325998286228867
+    },
+    "short_prompts": [
+      {
+        "lang": "ja",
+        "prompt": "人工知能とは",
+        "leading_eos": false,
+        "p_eos_first": 4.2834202758967876e-05,
+        "eos_rank_first": 2269,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、\n\n「自然界における自然現象」\n自然現象とは、自然現象が自然現象として成立し得る現象をいう。\n自然現象とは、自然現象が自然現象として成立し得る現象をいう。\n自然現象とは、自然現象が自然現象として成立し得る現象をいう。\n自然現象とは、自然現象が自然現象"
+      },
+      {
+        "lang": "ja",
+        "prompt": "人工知能とは",
+        "leading_eos": true,
+        "p_eos_first": 3.85269959224388e-06,
+        "eos_rank_first": 4595,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "人工知能の研究分野の一つ。人工知能の研究分野は、生物学や計算機科学など他の分野と大きく異なり、生物学や計算機科学のように、生物学や計算機科学のように、生物学や計算機科学のように、生物学や計算機科学のように、生物学や計算機科学のように、生物学や計算機科学のように、生物学や計算機科学のように、生物学"
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本の首都は",
+        "leading_eos": false,
+        "p_eos_first": 2.7271983071841532e-06,
+        "eos_rank_first": 15172,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2000年に北京市の北京市郊外の郊外に建設された北京首都国際空港である。\n\n概要 \n北京首都国際空港は、北京市の北郊外にある国際空港である。空港名は北京市の北郊外にある首都国際空港に由来する。空港には、1,000mの滑走路と2,000mの滑走路があり、"
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本の首都は",
+        "leading_eos": true,
+        "p_eos_first": 3.885762907884782e-06,
+        "eos_rank_first": 7642,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、首都機能を有する都市を指す。\n\n首都の一覧 \n\n日本の首都は、1947年（昭和22年）5月3日に東京都千代田区神田錦町1丁目1番地に設置された。1947年（昭和22年）5月3日、東京都が東京都庁を千代田区神田錦町1丁目1番地に"
+      },
+      {
+        "lang": "ja",
+        "prompt": "富士山は",
+        "leading_eos": false,
+        "p_eos_first": 1.3072968840788235e-06,
+        "eos_rank_first": 35589,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）3月31日に閉館した。\n\n閉館後 \n2011年（平成23年）3月11日に発生した東北地方太平洋沖地震（東日本大震災）の影響で、2011年（平成23年）3月11日から2012年（平成24年）3月31日まで休館した。閉館後"
+      },
+      {
+        "lang": "ja",
+        "prompt": "富士山は",
+        "leading_eos": true,
+        "p_eos_first": 5.69526264371234e-07,
+        "eos_rank_first": 29984,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "富士山の麓にある山である。\n\n富士山の麓には富士山本宮浅間大社があり、富士山の山頂には富士山本宮浅間大社がある。\n\n富士山本宮浅間大社 \n\n富士山本宮浅間大社（富士山本宮浅間大社）は、富士山の山頂にある神社である。富士山本宮浅間大社は"
+      },
+      {
+        "lang": "ja",
+        "prompt": "東京大学は",
+        "leading_eos": false,
+        "p_eos_first": 2.1014550384279573e-06,
+        "eos_rank_first": 22839,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）4月1日に「国立大学法人長崎大学」から「国立大学法人長崎大学」へ名称変更した。\n\n沿革 \n 1948年（昭和23年）\n 4月1日 - 長崎大学設立。\n 4月10日 - 長崎大学開学。\n 4月11"
+      },
+      {
+        "lang": "ja",
+        "prompt": "東京大学は",
+        "leading_eos": true,
+        "p_eos_first": 6.4305163505196106e-06,
+        "eos_rank_first": 7349,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、1949年（昭和24年）に東京大学に東京学芸大学、東京学芸大学、東京学芸大学短期大学部を創設し、1950年（昭和25年）に東京学芸大学短期大学部を東京学芸大学短期大学部に改称した。\n\n東京学芸大学短期大学部は、1950年（昭和25年）に東京学芸大学短期大学部に改称"
+      },
+      {
+        "lang": "ja",
+        "prompt": "第二次世界大戦は",
+        "leading_eos": false,
+        "p_eos_first": 1.798154357857129e-06,
+        "eos_rank_first": 27807,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、1943年（昭和18年）8月15日、連合国軍の空襲により、市街地の約3分の2が灰燼に帰した。\n\n戦後 \n\n1945年（昭和20年）8月15日、連合国軍最高司令官総司令部（GHQ）の命令により、市街地の約3分の2"
+      },
+      {
+        "lang": "ja",
+        "prompt": "第二次世界大戦は",
+        "leading_eos": true,
+        "p_eos_first": 3.746657284864341e-06,
+        "eos_rank_first": 7097,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "第二次世界大戦中、ドイツがドイツ本土に侵攻した。\n\nドイツは1940年6月1日にドイツ国防軍の侵攻を察知し、6月3日に侵攻を開始した。侵攻は6月4日に開始され、6月5日にドイツ軍は首都ベルリンを陥落させ、6月6日にドイツ軍は首都を陥落させた"
+      },
+      {
+        "lang": "ja",
+        "prompt": "光合成とは",
+        "leading_eos": false,
+        "p_eos_first": 3.0159611924318597e-05,
+        "eos_rank_first": 2220,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、酵素が酵素の作用により酵素の作用を変化させる反応のことである。\n\n酵素は酵素の作用により酵素の作用を変化させる反応を酵素反応と呼ぶ。酵素反応には酵素の作用を変化させる反応と酵素の作用を変化させる反応がある。\n\n酵素反応 \n酵素は酵素の"
+      },
+      {
+        "lang": "ja",
+        "prompt": "光合成とは",
+        "leading_eos": true,
+        "p_eos_first": 4.119706318306271e-06,
+        "eos_rank_first": 3331,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、光合成によって生成する有機化合物の合成のこと。光合成は光合成によって生成する有機化合物の合成である。\n\n光合成は光合成によって生成する有機化合物の合成である。光合成は光合成によって生成する有機化合物の合成である。光合成は光合成によって生成する有機化合物の合成である"
+      },
+      {
+        "lang": "ja",
+        "prompt": "織田信長は",
+        "leading_eos": false,
+        "p_eos_first": 8.689023047736555e-07,
+        "eos_rank_first": 45485,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2月1日に「2月1日、2月2日、2月3日、2月4日、2月5日、2月6日、2月7日、2月8日、2月9日、2月10日、2月11日、2月12"
+      },
+      {
+        "lang": "ja",
+        "prompt": "織田信長は",
+        "leading_eos": true,
+        "p_eos_first": 2.388826260357746e-06,
+        "eos_rank_first": 12681,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、織田信光の子。織田信光の父。\n\n生涯 \n織田信長は、織田信秀の子として誕生した。\n\n天正10年（1582年）、織田信長は織田信長の関東移封に従い、武蔵国忍城（現在の埼玉県さいたま市岩槻区）に移封された。\n\n天正18年（1590年）、"
+      },
+      {
+        "lang": "ja",
+        "prompt": "量子力学は",
+        "leading_eos": false,
+        "p_eos_first": 1.0368872608523816e-05,
+        "eos_rank_first": 8974,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、\n\nと表される。\n\nこのように、 は  を表す。\n\nこのように、 は  を表す。\n\nこのように、 は  を表す。\n\nこのように、 は  を表す。\n\nこのように、 は  を表す。\n\nこのように、 は  を表す。\n\nこのように、"
+      },
+      {
+        "lang": "ja",
+        "prompt": "量子力学は",
+        "leading_eos": true,
+        "p_eos_first": 7.899130650912412e-06,
+        "eos_rank_first": 3091,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、量子力学における量子力学的な現象を記述する理論である。量子力学は、量子力学における現象を記述する理論である。量子力学は、量子力学における現象を記述する理論である。量子力学は、量子力学における現象を記述する理論である。量子力学は、量子力学における現象を記述する理論である。量子力学は、量子力学における現象を記述する理論"
+      },
+      {
+        "lang": "ja",
+        "prompt": "京都は",
+        "leading_eos": false,
+        "p_eos_first": 2.0626350760721834e-06,
+        "eos_rank_first": 28581,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）3月31日に廃止された。\n\n路線データ \n\n 起点：神奈川県横浜市中区山下町（山下公園入口交差点、国道16号交点）\n 終点：神奈川県横浜市中区山下町（山下公園入口交差点、国道16号交点）\n 総延長：1.1 km\n\n歴史 \n "
+      },
+      {
+        "lang": "ja",
+        "prompt": "京都は",
+        "leading_eos": true,
+        "p_eos_first": 5.594908361672424e-05,
+        "eos_rank_first": 1919,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、\n\n京都 (小惑星) - 小惑星の一つ。\n京都 (列車) - 西日本旅客鉄道が運行する特急列車。\n京都 (列車) - 1920年（大正9年）3月1日から1921年（大正10年）3月31日まで京都 - 大阪間で運行されていた急行列車。\n京都 - 1920年（大正9"
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本語は",
+        "leading_eos": false,
+        "p_eos_first": 7.520711733377539e-06,
+        "eos_rank_first": 13022,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "「音楽」と訳されている。\n\n概要 \n\n1970年（昭和45年）4月1日 - 1971年（昭和46年）3月31日\n\n1971年（昭和46年）4月1日 - 1972年（昭和47年）3月31日\n\n197"
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本語は",
+        "leading_eos": true,
+        "p_eos_first": 8.217321010306478e-06,
+        "eos_rank_first": 8461,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、\n\n日本語の方言\n日本語における方言\n日本語の方言 (朝鮮語)\n日本語の方言 (朝鮮語)\n日本語の方言 (日本語)\n日本語の方言 (日本語)\n日本語の方言 (日本語)\n日本語の方言 (日本語)\n日本語の方言 (日本語)\n日本語の方言 (日本語)\n日本語の方言 (日本語)\n日本語の方言 (日本語)\n日本語の方言"
+      },
+      {
+        "lang": "en",
+        "prompt": "Artificial intelligence is",
+        "leading_eos": false,
+        "p_eos_first": 2.2116062609711662e-05,
+        "eos_rank_first": 1703,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a key component of the design of a computer system. The term \"computational intelligence\" is used in the context of computer science, and is used in the context of artificial intelligence. The term \"computational intelligence\" is used in the context of computer science, and is used in the context of artificial intelligence"
+      },
+      {
+        "lang": "en",
+        "prompt": "Artificial intelligence is",
+        "leading_eos": true,
+        "p_eos_first": 3.5899292925023474e-06,
+        "eos_rank_first": 1549,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a term used in the field of artificial intelligence. It is a term used in the field of artificial intelligence to describe the ability of an artificial intelligence system to perform tasks that are not possible in a human system. The term is used to describe the ability of an artificial intelligence system to perform tasks that are not possible in a"
+      },
+      {
+        "lang": "en",
+        "prompt": "The capital of France is",
+        "leading_eos": false,
+        "p_eos_first": 2.6927839371637674e-06,
+        "eos_rank_first": 3061,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " Paris. The city is also the seat of the French National Assembly, the French Senate, the French National Assembly, the French National Assembly of the Council of Europe, the French National Assembly of the Republic, the French National Assembly of the Republic of the Congo, the French National Assembly of the Republic of the Congo, the"
+      },
+      {
+        "lang": "en",
+        "prompt": "The capital of France is",
+        "leading_eos": true,
+        "p_eos_first": 8.753031011110579e-07,
+        "eos_rank_first": 7643,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " Paris. The official name of the capital is the \"Cité de la République\" (City of the Republic). The official name of the capital is the \"Cité de la République\" (City of the Republic).\n\nThe city of Paris is the capital of France, and the administrative centre"
+      },
+      {
+        "lang": "en",
+        "prompt": "Mount Everest is",
+        "leading_eos": false,
+        "p_eos_first": 1.40371030283859e-05,
+        "eos_rank_first": 1598,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a 2010 documentary film directed by David F. Sandberg and produced by Sandberg and his wife, actress and producer, Jennifer Aniston. The film follows the life of the late American film director, producer, and screenwriter, John Huston, who was born in 1926 in New York City. The"
+      },
+      {
+        "lang": "en",
+        "prompt": "Mount Everest is",
+        "leading_eos": true,
+        "p_eos_first": 1.1714290621966938e-06,
+        "eos_rank_first": 1532,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a mountain in the Himalayas, located in the Indian state of Uttarakhand. It is the highest mountain in the world, and the second highest mountain in the world after Mount Everest. It is located in the Kumaon region of Uttarakhand, and is the 11th highest mountain in the world. The"
+      },
+      {
+        "lang": "en",
+        "prompt": "The University of Oxford is",
+        "leading_eos": false,
+        "p_eos_first": 4.829241788684158e-06,
+        "eos_rank_first": 2907,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the oldest university in the United Kingdom, and the oldest university in the world. It was founded in 1139 by King Stephen, and is the oldest university in the world. The University of Oxford is a member of the Association of Commonwealth Universities, the European University Association, the Association of Commonwealth Universities, the Association of"
+      },
+      {
+        "lang": "en",
+        "prompt": "The University of Oxford is",
+        "leading_eos": true,
+        "p_eos_first": 4.0869159079193196e-07,
+        "eos_rank_first": 2673,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a public research university in Oxford, England. It is the largest university in the United Kingdom by number of students and the second-largest university in the United Kingdom by number of students. It is the largest university in the United Kingdom by number of students and the second-largest university in the United Kingdom by number of students. The"
+      },
+      {
+        "lang": "en",
+        "prompt": "World War II was",
+        "leading_eos": false,
+        "p_eos_first": 8.556959073757753e-06,
+        "eos_rank_first": 2511,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a major war in the Pacific Theater of World War II. The Pacific War was fought between the United States and the Empire of Japan from 1941 to 1945. The Pacific War was fought between the United States and the Empire of Japan from 1941 to 1945. The Pacific War was fought between"
+      },
+      {
+        "lang": "en",
+        "prompt": "World War II was",
+        "leading_eos": true,
+        "p_eos_first": 2.8790359465347137e-06,
+        "eos_rank_first": 2509,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a war fought between the Axis powers and the Allies from 1940 to 1945. It was fought between the Axis powers and the Allies, and was fought in the Mediterranean, Pacific, and European theaters of World War II. The war was fought between the Axis powers and the Allies, and was fought between the"
+      },
+      {
+        "lang": "en",
+        "prompt": "Photosynthesis is",
+        "leading_eos": false,
+        "p_eos_first": 1.2208210137032438e-05,
+        "eos_rank_first": 1806,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a process in which a chemical reaction occurs in a chemical environment. The chemical reaction is a chemical reaction that occurs in a chemical environment. The chemical reaction is a chemical reaction that occurs in a chemical environment. The chemical reaction is a chemical reaction that occurs in a chemical environment. The chemical reaction is a chemical reaction that occurs"
+      },
+      {
+        "lang": "en",
+        "prompt": "Photosynthesis is",
+        "leading_eos": true,
+        "p_eos_first": 1.59273815825145e-06,
+        "eos_rank_first": 1930,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the process of synthesizing light energy from the light produced by photosynthesis. Photosynthesis is a process that involves the conversion of light energy into chemical energy. The process of photosynthesis is a form of photosynthesis, which is a form of photosynthesis that is a form of photosynthesis that is a form of"
+      },
+      {
+        "lang": "en",
+        "prompt": "Albert Einstein was",
+        "leading_eos": false,
+        "p_eos_first": 3.1672871045884676e-06,
+        "eos_rank_first": 4396,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " born in 1930 in the town of Kars, Turkey. He was the son of a Turkish father and a Russian mother. He was the youngest of four children. His father was a doctor and his mother was a teacher. He was educated at the Russian school in Kars. He graduated from the Russian school"
+      },
+      {
+        "lang": "en",
+        "prompt": "Albert Einstein was",
+        "leading_eos": true,
+        "p_eos_first": 5.656964958689059e-07,
+        "eos_rank_first": 3968,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a 20th-century American physicist and mathematician. He was born in New York City on 1 January 1886. He died in New York City on 1 January 1961.\n\nEinstein was a member of the American Mathematical Society, the American Physical Society, and the American Association for the Advancement"
+      },
+      {
+        "lang": "en",
+        "prompt": "Quantum mechanics is",
+        "leading_eos": false,
+        "p_eos_first": 1.41493965202244e-05,
+        "eos_rank_first": 1339,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a branch of mathematics that studies the properties of systems that are not necessarily linear. It is a branch of mathematical physics that studies the properties of systems that are not linear. The theory of the nonlinear system is a special case of the linear system.\n\nThe nonlinear system is a system that is not linear. The"
+      },
+      {
+        "lang": "en",
+        "prompt": "Quantum mechanics is",
+        "leading_eos": true,
+        "p_eos_first": 1.8641160295373993e-06,
+        "eos_rank_first": 1184,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a branch of quantum mechanics that deals with the dynamics of quantum systems. It is a branch of quantum mechanics that deals with the dynamics of quantum systems, and is closely related to quantum information theory. Quantum mechanics is a branch of quantum mechanics that deals with the dynamics of quantum systems, and is closely related to quantum information theory"
+      },
+      {
+        "lang": "en",
+        "prompt": "London is",
+        "leading_eos": false,
+        "p_eos_first": 5.1837800128851086e-05,
+        "eos_rank_first": 1126,
+        "greedy_len": 48,
+        "greedy_eos": true,
+        "greedy_text": " a village in the municipality of Kruševac, Serbia. According to the 2002 census, the village has a population of  1,064 people.\n\nReferences\n\nPopulated places in Rasina District"
+      },
+      {
+        "lang": "en",
+        "prompt": "London is",
+        "leading_eos": true,
+        "p_eos_first": 1.8694621530812583e-06,
+        "eos_rank_first": 2595,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a 2007 American drama film directed by David Gordon Green and starring Michael C. Hall, Michael C. Hall, and Michael C. Hall. The film was released on DVD on April 1, 2008.\n\nPlot\n\nCast\nMichael C. Hall as Michael\nMichael C. Hall as"
+      },
+      {
+        "lang": "en",
+        "prompt": "The English language is",
+        "leading_eos": false,
+        "p_eos_first": 2.600358357085497e-06,
+        "eos_rank_first": 4177,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the most widely spoken language in the United States, with 1.5 million speakers of English as a first language. The United States is the world's largest producer of English speakers, with 1.5 million speakers of English as a first language. The United States is also the world's largest producer of French speakers"
+      },
+      {
+        "lang": "en",
+        "prompt": "The English language is",
+        "leading_eos": true,
+        "p_eos_first": 6.647688337579893e-07,
+        "eos_rank_first": 4484,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the official language of the United Kingdom, and is the official language of the British Overseas Territories, the Crown Dependencies, and the Crown Dependencies of Guernsey, Jersey, and the Isle of Man. The English language is also the official language of the British Overseas Territories, the Crown Dependencies, and the Crown Dependencies"
+      }
+    ]
+  },
+  "after": {
+    "en/reference": {
+      "n": 200,
+      "len": 256.0,
+      "early_eos": 0.0,
+      "rep4": 0.024229249011857704,
+      "loop": 0.0,
+      "distinct1": 0.20373046875,
+      "distinct2": 0.6556470588235294,
+      "lang_ok": 0.9982156046082554
+    },
+    "en/greedy": {
+      "n": 200,
+      "len": 245.75,
+      "early_eos": 0.09,
+      "rep4": 0.5370193163316215,
+      "loop": 0.625,
+      "distinct1": 0.07985757884028484,
+      "distinct2": 0.21734422880490295,
+      "lang_ok": 0.9984449381729762
+    },
+    "en/sample": {
+      "n": 200,
+      "len": 236.825,
+      "early_eos": 0.195,
+      "rep4": 0.06700533870659078,
+      "loop": 0.0,
+      "distinct1": 0.16292621133748547,
+      "distinct2": 0.5220820523693417,
+      "lang_ok": 0.9976897736100142
+    },
+    "ja/reference": {
+      "n": 200,
+      "len": 256.0,
+      "early_eos": 0.0,
+      "rep4": 0.030711462450592877,
+      "loop": 0.0,
+      "distinct1": 0.306171875,
+      "distinct2": 0.7802941176470588,
+      "lang_ok": 0.9305972762611328
+    },
+    "ja/greedy": {
+      "n": 200,
+      "len": 243.24,
+      "early_eos": 0.1,
+      "rep4": 0.5938007280815588,
+      "loop": 0.705,
+      "distinct1": 0.07975661897714192,
+      "distinct2": 0.18143163804491413,
+      "lang_ok": 0.9394487638351673
+    },
+    "ja/sample": {
+      "n": 200,
+      "len": 226.21,
+      "early_eos": 0.275,
+      "rep4": 0.12040734275299238,
+      "loop": 0.02,
+      "distinct1": 0.2225144776977145,
+      "distinct2": 0.5769948048488078,
+      "lang_ok": 0.9330744976049834
+    },
+    "short_prompts": [
+      {
+        "lang": "ja",
+        "prompt": "人工知能とは",
+        "leading_eos": false,
+        "p_eos_first": 5.060274361312622e-06,
+        "eos_rank_first": 7760,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "関係がない。\n\n脚注\n\n関連項目 \n\n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n \n "
+      },
+      {
+        "lang": "ja",
+        "prompt": "人工知能とは",
+        "leading_eos": true,
+        "p_eos_first": 8.31098441267386e-06,
+        "eos_rank_first": 2458,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、\n\n人工知能 (AI) - \n人工知能 (AI) - \n人工知能 (AI) - \n人工知能 (AI) - \n人工知能 (AI) - \n人工知能 (AI) - \n人工知能 (AI) - \n人工知能 (AI) - \n人工知能 (AI) -"
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本の首都は",
+        "leading_eos": false,
+        "p_eos_first": 7.888978075243358e-07,
+        "eos_rank_first": 25476,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2000年に北京市の北京市人民政府所在地の北京市郊外の黄河北岸の黄河南岸の黄河北岸の黄河北岸の黄河南岸の黄河北岸の黄河南岸の黄河北岸の黄河南岸の黄河"
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本の首都は",
+        "leading_eos": true,
+        "p_eos_first": 5.950738795945654e-06,
+        "eos_rank_first": 3848,
+        "greedy_len": 23,
+        "greedy_eos": true,
+        "greedy_text": "、首都機能を有する都市の一覧。\n\n首都の一覧\n\n関連項目 \n 日本の首都\n\n都市の一覧\nとし"
+      },
+      {
+        "lang": "ja",
+        "prompt": "富士山は",
+        "leading_eos": false,
+        "p_eos_first": 3.923532403860008e-06,
+        "eos_rank_first": 17393,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2011年（平成23年）3月11日に発生した東北地方太平洋沖地震（東日本大震災）の影響で、被災した宮城県南三陸町において、津波による浸水被害が発生した。被災した南三陸町では、津波による浸水被害は発生しなかったものの、津波による浸水被害は、津波による浸水被害が1,000人以上の死"
+      },
+      {
+        "lang": "ja",
+        "prompt": "富士山は",
+        "leading_eos": true,
+        "p_eos_first": 9.284427164857334e-07,
+        "eos_rank_first": 12038,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "富士山の最高峰であり、富士山の山頂は富士山の最高峰である。\n\n富士山は富士山国立公園に属し、富士山の山頂は富士山の最高峰である。富士山の山頂は富士山の最高峰であり、富士山の山頂は富士山の最高峰でもある。\n\n富士山は富士山国立公園の「富士五湖」の一つであり、富士山の山"
+      },
+      {
+        "lang": "ja",
+        "prompt": "東京大学は",
+        "leading_eos": false,
+        "p_eos_first": 2.0778402358700987e-06,
+        "eos_rank_first": 17611,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）4月1日に「大学設置・学校法人審議会」が設置されて以降、私立大学として認可された大学としては唯一である。\n\n沿革 \n 1920年（大正9年） - 専門学校令による旧制専門学校として東京高等工業学校が創立。\n 1921年（大正10"
+      },
+      {
+        "lang": "ja",
+        "prompt": "東京大学は",
+        "leading_eos": true,
+        "p_eos_first": 5.20656249136664e-06,
+        "eos_rank_first": 8085,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、1949年（昭和24年）に東京大学に包括され、1950年（昭和25年）に東京大学に東京大学が統合されて東京大学が設立された。\n\n沿革 \n1949年（昭和24年）\n4月1日 - 東京大学が東京大学に包括され、東京大学が東京大学に東京大学が統合されて東京大学が設立された"
+      },
+      {
+        "lang": "ja",
+        "prompt": "第二次世界大戦は",
+        "leading_eos": false,
+        "p_eos_first": 8.237853762693703e-06,
+        "eos_rank_first": 11766,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）3月31日に終了した。\n\n概要 \n\n2009年（平成21年）3月31日まで放送されていた『情報ワイド 夕方いちばん』の後継番組として、2009年（平成21年）4月1日にスタートした。\n\n番組開始当初、夕方ニュースは『ゆう"
+      },
+      {
+        "lang": "ja",
+        "prompt": "第二次世界大戦は",
+        "leading_eos": true,
+        "p_eos_first": 3.910453415301163e-06,
+        "eos_rank_first": 5173,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、第二次世界大戦中の1940年（昭和15年）12月1日から1945年（昭和20年）8月15日までの間、日本とソビエト連邦の間で行われた戦争である。\n\n概要 \n第二次世界大戦は、1940年（昭和15年）12月1日に第二次世界大戦（太平洋戦争）開戦した。開戦当初は日本とソビエト連邦が"
+      },
+      {
+        "lang": "ja",
+        "prompt": "光合成とは",
+        "leading_eos": false,
+        "p_eos_first": 5.301231431076303e-05,
+        "eos_rank_first": 2158,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、\n\nと表される。\n\n合成 \n\n合成法には、\n\nと、\n\nがある。\n\n合成法には、\n\nと、\n\nがある。\n\n合成法には、\n\nと、\n\nがある。\n\n合成法には、\n\nと、\n\nがある。\n\n合成"
+      },
+      {
+        "lang": "ja",
+        "prompt": "光合成とは",
+        "leading_eos": true,
+        "p_eos_first": 4.45078467237181e-06,
+        "eos_rank_first": 3127,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、光合成によって生成する物質を光エネルギーに変換する化学反応である。光エネルギーは光エネルギー変換器によって生成される。\n\n光合成は光エネルギー変換器によって生成される物質を光エネルギーに変換する化学反応である。光エネルギーは光エネルギー変換器によって生成される物質を光エネルギーに変換する光エネルギー変換"
+      },
+      {
+        "lang": "ja",
+        "prompt": "織田信長は",
+        "leading_eos": false,
+        "p_eos_first": 1.2324371709837578e-06,
+        "eos_rank_first": 32195,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2月1日に「2月1日、2月2日、2月3日、2月4日、2月5日、2月6日、2月7日、2月8日、2月9日、2月10日、2月11日、2月12"
+      },
+      {
+        "lang": "ja",
+        "prompt": "織田信長は",
+        "leading_eos": true,
+        "p_eos_first": 1.0117157671629684e-06,
+        "eos_rank_first": 18348,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、室町幕府第3代将軍。室町幕府第3代将軍・足利義満の子。室町幕府第4代将軍・足利義昭の弟。室町幕府第5代将軍・足利義教の父。室町幕府第5代将軍・足利義澄の弟。室町幕府第6代将軍・足利義教の父。室町幕府第7代将軍・足利義教の父。室町幕府第8代将軍"
+      },
+      {
+        "lang": "ja",
+        "prompt": "量子力学は",
+        "leading_eos": false,
+        "p_eos_first": 1.6173289623111486e-05,
+        "eos_rank_first": 7355,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）3月31日に終了した。\n\n概要 \n\n2009年（平成21年）3月31日まで放送されていた『情報ワイド 夕方いちばん』の後継番組として、2009年（平成21年）4月1日にスタートした。開始当初の放送時間は毎週月曜 - 金曜 17"
+      },
+      {
+        "lang": "ja",
+        "prompt": "量子力学は",
+        "leading_eos": true,
+        "p_eos_first": 8.702347258804366e-06,
+        "eos_rank_first": 2397,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、量子力学において、量子力学は、量子力学における量子力学の基本概念である。量子力学は、量子力学における量子力学の基本概念であり、量子力学は、量子力学における量子力学の基本概念である。\n\n量子力学は、量子力学における基本概念であり、量子力学における基本概念は、量子力学における基本概念である。量子力学における基本概念は、量子力学における"
+      },
+      {
+        "lang": "ja",
+        "prompt": "京都は",
+        "leading_eos": false,
+        "p_eos_first": 3.0542280455847504e-06,
+        "eos_rank_first": 20733,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）3月31日に廃止。\n\n路線データ \n廃止時点\n 起点：神奈川県横浜市中区新山下町\n 終点：神奈川県横浜市中区新山下町\n 総延長：1.065km\n 幅員：6.0m\n\n歴史 \n 1960年"
+      },
+      {
+        "lang": "ja",
+        "prompt": "京都は",
+        "leading_eos": true,
+        "p_eos_first": 2.146779115719255e-05,
+        "eos_rank_first": 3955,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、\n\n京都 (曖昧さ回避)\n京都 (列車) - かつて日本国有鉄道が運行していた急行列車\n京都 (列車) - かつて日本国有鉄道が運行していた急行列車\n京都 (列車) - かつて日本国有鉄道が運行していた急行列車\n京都 (列車) - かつて日本国有鉄道が運行していた急行列車\n京都 (列車) - かつて日本国有鉄道が運行していた急行列車\n京都 ("
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本語は",
+        "leading_eos": false,
+        "p_eos_first": 1.1146843462483957e-05,
+        "eos_rank_first": 10454,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": "、2010年（平成22年）4月1日から2011年（平成23年）3月31日まで放送された。\n\n概要 \n\n2010年（平成22年）4月1日から2011年（平成23年）3月31日まで放送された。\n\n2010年（平成22年）4月"
+      },
+      {
+        "lang": "ja",
+        "prompt": "日本語は",
+        "leading_eos": true,
+        "p_eos_first": 4.336385245551355e-06,
+        "eos_rank_first": 9520,
+        "greedy_len": 7,
+        "greedy_eos": true,
+        "greedy_text": "、\n\n日本語の方言\n日本語"
+      },
+      {
+        "lang": "en",
+        "prompt": "Artificial intelligence is",
+        "leading_eos": false,
+        "p_eos_first": 1.0578054570942186e-05,
+        "eos_rank_first": 2360,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a key component of the design of a computer system. The term \"intelligent\" is used to describe the ability of a system to perform its functions without human intervention. The term \"intelligent\" is also used to describe the ability of a system to perform its functions without human intervention. The term \"intelligent\""
+      },
+      {
+        "lang": "en",
+        "prompt": "Artificial intelligence is",
+        "leading_eos": true,
+        "p_eos_first": 2.9962725420773495e-06,
+        "eos_rank_first": 1535,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a term used in the context of artificial intelligence (AI) to describe the ability of an artificial intelligence system to perform tasks that are not possible in a human-readable form. The term is used in contrast to the term artificial general intelligence (AGI), which is used to describe the ability of an artificial general intelligence"
+      },
+      {
+        "lang": "en",
+        "prompt": "The capital of France is",
+        "leading_eos": false,
+        "p_eos_first": 3.908176893219206e-07,
+        "eos_rank_first": 5161,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " Paris. The city is also the seat of the French Parliament, the Conseil d'État, and the French Ministry of Foreign Affairs. The city is also the seat of the French National Assembly, the National Assembly of France, and the French Senate.\n\nThe city is the seat of the French Catholic Church,"
+      },
+      {
+        "lang": "en",
+        "prompt": "The capital of France is",
+        "leading_eos": true,
+        "p_eos_first": 2.5204400344591704e-07,
+        "eos_rank_first": 9165,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the official residence of the French president. The president is the head of state and head of government of France, and is the head of state and head of government of France. The president is the head of state and head of government of France, and is the head of government of France. The president is elected by the"
+      },
+      {
+        "lang": "en",
+        "prompt": "Mount Everest is",
+        "leading_eos": false,
+        "p_eos_first": 4.520738912106026e-06,
+        "eos_rank_first": 1958,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a 2010 Indian Hindi-language action thriller film directed by Anil Sharma and produced by Yash Raj Films. The film stars Akshay Kumar, Akshaye Khanna, Sonam Kapoor, and Sonam Singh. The film was released on 14 May 2010. The film was a box office failure.\n"
+      },
+      {
+        "lang": "en",
+        "prompt": "Mount Everest is",
+        "leading_eos": true,
+        "p_eos_first": 4.963239348398929e-07,
+        "eos_rank_first": 2287,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a mountain in the Karakoram range of the Himalayas, located in the Tibet Autonomous Region of China. It is the highest mountain in the world, and the second highest in the world, after Mount Everest. It is located in the Tibet Autonomous Region of China, in the Tibet Autonomous Region of the People's Republic of China"
+      },
+      {
+        "lang": "en",
+        "prompt": "The University of Oxford is",
+        "leading_eos": false,
+        "p_eos_first": 2.00544513973e-06,
+        "eos_rank_first": 4395,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the oldest university in the United Kingdom, and the oldest university in the world. It was founded in 1478 by King Henry VII, and is the oldest university in the world. The University of Oxford is a member of the Russell Group of British universities, and is a founding member of the Russell Group of research universities"
+      },
+      {
+        "lang": "en",
+        "prompt": "The University of Oxford is",
+        "leading_eos": true,
+        "p_eos_first": 6.512777872558217e-08,
+        "eos_rank_first": 6064,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a public research university in Oxford, England. It is the oldest university in the United Kingdom, founded in 1299. It is the oldest university in the United Kingdom and the oldest university in the world. The university is a member of the Russell Group of research-intensive universities, and is a member of the Association"
+      },
+      {
+        "lang": "en",
+        "prompt": "World War II was",
+        "leading_eos": false,
+        "p_eos_first": 3.4258926007169066e-06,
+        "eos_rank_first": 3752,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a war fought between the Soviet Union and Nazi Germany. The war was fought in the Soviet Union, and was fought from 1941 to 1945. The war was fought in the Eastern Front of World War II. The war was fought between the Soviet Union and Nazi Germany. The war was fought in the Soviet"
+      },
+      {
+        "lang": "en",
+        "prompt": "World War II was",
+        "leading_eos": true,
+        "p_eos_first": 5.368079314393981e-07,
+        "eos_rank_first": 4247,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a war fought between the Axis powers and the Allies from 1940 to 1945. The war was fought in Europe, Asia, and Africa, and was fought between the Axis powers and the Allies. The war was fought in the European theatre of World War II, and was fought between the Axis powers and the"
+      },
+      {
+        "lang": "en",
+        "prompt": "Photosynthesis is",
+        "leading_eos": false,
+        "p_eos_first": 1.4784105587750673e-05,
+        "eos_rank_first": 2001,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a process that occurs in plants, and is a key component of the plant's life cycle. The plant's photosynthesis is a complex process that involves the production of a variety of compounds, including carbohydrates, sugars, and amino acids. The plant's photosynthesis is a key component of the plant's"
+      },
+      {
+        "lang": "en",
+        "prompt": "Photosynthesis is",
+        "leading_eos": true,
+        "p_eos_first": 7.669249271202716e-07,
+        "eos_rank_first": 3228,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the process of the production of chemical compounds from inorganic precursors. The process is also known as the biosynthesis of carbohydrates, and is a key component of the biosynthesis of proteins. The process is also known as the biosynthesis of nucleic acids. The process is also known as the biosynthesis of"
+      },
+      {
+        "lang": "en",
+        "prompt": "Albert Einstein was",
+        "leading_eos": false,
+        "p_eos_first": 2.9899247238063253e-06,
+        "eos_rank_first": 4841,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " born in 1908 in the city of Kherson, Ukraine. He was the son of a Jewish family. He studied at the University of Kharkiv, where he graduated in 1929. He then worked as a teacher in the city of Kherson. In 1931, he was arrested and sent to the"
+      },
+      {
+        "lang": "en",
+        "prompt": "Albert Einstein was",
+        "leading_eos": true,
+        "p_eos_first": 2.6456251589479507e-07,
+        "eos_rank_first": 4296,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a German-American physicist who was born in 1876 in Berlin, Germany. He was the son of the physicist Albert Einstein and his wife, the writer and poet Else Lasker-Schüler. Einstein was the brother of the physicist Albert Einstein Jr. and the physicist Albert Einstein III. Einstein was the father of"
+      },
+      {
+        "lang": "en",
+        "prompt": "Quantum mechanics is",
+        "leading_eos": false,
+        "p_eos_first": 1.2583875104610343e-05,
+        "eos_rank_first": 1604,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a branch of mathematics that studies the properties of a system of interacting particles, called \"collapsing particles\". The concept of collapsing particles was introduced by the physicist John von Neumann in 1927. The concept of collapsing particles was later generalized by the mathematician John von Neumann in 1930."
+      },
+      {
+        "lang": "en",
+        "prompt": "Quantum mechanics is",
+        "leading_eos": true,
+        "p_eos_first": 1.8641087535797851e-06,
+        "eos_rank_first": 1639,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a branch of quantum mechanics that deals with the interaction of quantum states with the environment of a system. The term was coined by the physicist John von Neumann in 1927, and the term was first used in a 1931 paper by von Neumann and his student, Hans Geiger. The term was coined by von"
+      },
+      {
+        "lang": "en",
+        "prompt": "London is",
+        "leading_eos": false,
+        "p_eos_first": 1.0745451618277002e-05,
+        "eos_rank_first": 2607,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a 2010 American drama film directed by Michael H. Weber and written by Michael H. Weber and Michael H. Weber. The film stars Michael Shannon, Michael Shannon, and Michael Shannon's real-life son, Michael Shannon Jr. The film was released on October 21, 2010, by Lionsgate.\n"
+      },
+      {
+        "lang": "en",
+        "prompt": "London is",
+        "leading_eos": true,
+        "p_eos_first": 1.2375826372590382e-06,
+        "eos_rank_first": 2758,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " a 2010 American drama film directed by Michael H. Weber and written by Michael H. Weber and Michael H. Weber. The film stars Michael Shannon, Michael Shannon, and Michael Shannon's real-life son, Michael Shannon Jr. The film was released on October 21, 2010, by IFC Films"
+      },
+      {
+        "lang": "en",
+        "prompt": "The English language is",
+        "leading_eos": false,
+        "p_eos_first": 1.41869986691745e-06,
+        "eos_rank_first": 5522,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the most widely spoken language in the United States, with 1.5 million people in the country. The United States is the world's largest producer of tobacco, and the world's largest producer of sugar, and the world's largest producer of cotton, and the world's largest producer of rice. The United States is"
+      },
+      {
+        "lang": "en",
+        "prompt": "The English language is",
+        "leading_eos": true,
+        "p_eos_first": 2.966885688238108e-07,
+        "eos_rank_first": 6655,
+        "greedy_len": 64,
+        "greedy_eos": false,
+        "greedy_text": " the official language of the United Kingdom. It is the official language of the United Kingdom, and is the official language of the Crown Dependencies of the Isle of Man and the Channel Islands. It is also the official language of the Overseas Territories of the United Kingdom, which are British Overseas Territories. The official language of the"
+      }
+    ]
+  }
+}
