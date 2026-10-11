@@ -183,3 +183,6 @@ test-results/
 # AI agent local setup artifacts
 /.agents/skills
 /.claude/skills
+
+# Custom Output Directory
+examples/pytorch/language-modeling/
