@@ -1,6 +1,6 @@
 """規則ベースのサンプル品質フィルタ。
 
-自己蒸留データセット（gpt-oss-20b 自身の生成）から、以下を除去する:
+自己蒸留データセット（gemma-4-26B-A4B-it 自身の生成）から、以下を除去する:
 
 - 途中切れ（vLLM の `finish_reason == "length"`）
 - 言語混入（プロンプトの想定言語と応答の文字種が食い違う）
@@ -124,6 +124,9 @@ def is_language_mixed(prompt: str, response: str, domain: str = "") -> tuple[boo
     counts = script_counts(body)
     letters = sum(counts.values())
     if letters == 0:
+        # code 域の応答がコードブロックだけ（HumanEval の関数補完など）は正当な応答
+        if domain == "code" and _FENCE.search(response or ""):
+            return False, ""
         return True, "no_letters"
 
     if expected == "ja":
@@ -197,11 +200,34 @@ def head_is_junk(text: str) -> bool:
 _INSTRUCTION_CITE = re.compile(
     r"developer (?:instruction|message|says|said|wants)|system (?:prompt|message|instruction)|"
     r"per (?:the )?(?:developer |system )?instruction|the instruction says|instructed to|"
-    r"Reason in English|analysis channel|language of the user'?s request",
+    r"Reason in English|Think in English|analysis channel|thought channel|language of the user'?s request",
     re.IGNORECASE,
 )
-# no_reasoning の応答に英語の推論（We need to ...）が混入していないか
-_ENGLISH_COT = re.compile(r"\bWe (?:need|should|have to|must|can|could) (?:to )?[a-z]")
+# Gemma 4 の制御トークン（思考 <|channel>…<channel|>、ターン <|turn>…<turn|> など）が本文に残っていないか
+_SPECIAL_TOKEN = re.compile(
+    r"<\|(?:channel|turn|think|tool_call|tool_response|tool|\"|image|audio|video)|"
+    r"<(?:channel|turn|tool_call|tool_response|tool)\|>"
+)
+
+# no_reasoning の応答に、利用者や回答そのものを三人称で語るメタ推論が混入していないか。
+# gpt-oss 版の `We (need|can|must) ...` は Gemma 4 では英語解説の自然な文（"We can rewrite ..."）
+# まで落とした（パイロット 1 で 30 件すべて誤検出）ため、メタ推論の言い回しに絞る
+_ENGLISH_COT = re.compile(
+    r"\bThe user (?:asks|asked|wants|is asking|writes|wrote)\b|"
+    r"\bWe need to (?:answer|respond|reply|produce|output|write the answer)\b|"
+    r"\bLet'?s (?:craft|produce|draft) (?:the|an|a) (?:answer|response|reply)\b"
+)
+
+
+# 応答の途中で誤りに気づいて言い直している（"・・・あ、失礼しました。計算し直します"、"Wait, let's re-examine"）。
+# 思考なしの応答で目立つ（パイロット 2 で japanese 域の思考なし 1 割前後）。誤答を含んだまま
+# 応答が続くため除く。思考（thinking）内の自己訂正は推論の一部なので対象外
+_SELF_CORRECTION = re.compile(
+    r"計算ミス|失礼しました|計算し直|訂正(?:します|とお詫び|と最終)|誤りがありました|間違えました|"
+    r"\bI made (?:a|an) (?:mistake|error)\b|\bWait[,.!]|\bOops\b|"
+    r"\b(?:let'?s|let me) re-?(?:examine|calculate|check|evaluate)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -248,10 +274,13 @@ def evaluate(record: dict) -> FilterResult:
     if len(response) < min_chars:
         reasons.append("too_short")
 
-    if "<|" in response or "<|" in (record.get("thinking") or ""):
+    if _SPECIAL_TOKEN.search(response) or _SPECIAL_TOKEN.search(record.get("thinking") or ""):
         reasons.append("special_token_leak")
     elif response and head_is_junk(response):
         reasons.append("junk_head")
+
+    if _SELF_CORRECTION.search(response):
+        reasons.append("response_self_correction")
 
     mixed, why = is_language_mixed(record.get("prompt", ""), response, domain)
     if mixed:
@@ -259,7 +288,9 @@ def evaluate(record: dict) -> FilterResult:
 
     if record.get("mode") == "reasoning":
         thinking = (record.get("thinking") or "").strip()
-        if not thinking:
+        if not record.get("thinking_closed", True):
+            reasons.append("thinking_unclosed")
+        elif not thinking:
             reasons.append("empty_thinking")
         elif not thinking_is_english(thinking):
             reasons.append("thinking_not_english")

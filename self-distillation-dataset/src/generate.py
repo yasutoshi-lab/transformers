@@ -1,44 +1,43 @@
-"""gpt-oss-20b 自身による自己蒸留データ生成パイプライン。
+"""google/gemma-4-26B-A4B-it 自身による自己蒸留データ生成パイプライン。
 
-設計方針（wiki 側の知見と 2026-10-10 のレビューに基づく）:
+gpt-oss-20b 版（gpt-oss-self-distill ブランチ）の方式を Gemma 4 へ移植したもの。
 
-- 教師は外部に置かない。生成モデル = 対象モデル自身（openai/gpt-oss-20b）。
+設計方針:
+
+- 教師は外部に置かない。生成モデル = 対象モデル自身（google/gemma-4-26B-A4B-it）。
   特権情報（参照解）を与えない素朴 on-policy 生成のみを使う（特権情報を与えると
   thinking モデルで fork suppression が起きる —
   wiki/sources/rethinking-on-policy-self-distillation-for-thinking-models）。
-- reasoning あり / なしを同量生成する。Harmony 形式では生成開始チャネルが
-  `analysis` か `final` かで決まるため、chat template の `enable_thinking` で制御し、
-  書き出し（プレフィックス）を明示的に付与する。
-- prefix はチャネルで分ける。`analysis` に回答調の書き出しを注入すると橋渡しが
-  句読点の断片になる（wiki 側 `concepts/prefix-failure`）。reasoning は推論調の英語、
-  no_reasoning はドメイン言語の回答調。
-- reasoning_effort は Curator 方針で medium を最大割合、low / high を含む。
-- 途中切れは `finish_reason == "length"` で除去。
-- 言語混入・重複は規則ベースで除去（filters.py / dedup.py）。thinking は英語 only。
-- 目標は**通過数**（Curator 決定）。ドメイン別 quota はプールサイズで上限をかける。
+- reasoning あり / なしを同量生成する。Gemma 4 の思考は `<|channel>thought\\n…<channel|>`
+  で囲まれる。chat template の `enable_thinking=True` は system 先頭に `<|think|>` を入れ、
+  生成開始は `<|turn>model\\n` で終わる。`enable_thinking=False` は生成開始に空の思考
+  `<|channel>thought\\n<channel|>` を置く。prefix は必ずこのヘッダの後ろに置く
+  （gpt-oss 版の教訓: ヘッダ前に置くとモデルがヘッダを出し直し、継ぎ目が断片になる）。
+- Gemma 4 には gpt-oss の reasoning_effort に当たる段階指定がないため、effort 混合は行わない。
+- サンプリングはモデル同梱の generation_config（temperature 1.0 / top_p 0.95 / top_k 64）。
+- 系列長は max-model-len 16384。生成上限はリクエストごとにプロンプト長から逆算して切り詰める。
+- 途中切れは `finish_reason == "length"` で除去。言語混入・重複は規則ベースで除去。
+- 目標は**通過数**。複数 vLLM エンドポイント（GPU ごとに 1 サーバー）へ round-robin で投げ、
+  (domain, mode) の進捗が quota 比で最も遅れているものから順にシードを供給する。
 
 実行例:
 
-  # vLLM サーバー（ws1-arc）
-  docker run --rm --gpus all -p 8000:8000 \\
-    -v ~/.cache/huggingface:/data \\
-    vllm/vllm-openai:v0.25.1-cu129-ubuntu2404 \\
-    --model openai/gpt-oss-20b --served-model-name gpt-oss-20b \\
-    --max-model-len 8192 --max-num-seqs 32 --gpu-memory-utilization 0.80
-
-  # 通過数 10 万件（dialogue は今回の実行から除外）
-  python3 src/generate.py --target-kept 100000 --concurrency 32 \\
-    --output out/full.jsonl --upload-to-hf yasutoshi-lab/gpt-oss-20b-self-distillation-100k
+  # vLLM サーバー（ws3-arc、GPU ごとに 1 コンテナ）は README 参照
+  python3 src/generate.py --target-kept 500000 \\
+    --base-urls http://localhost:8110/v1,http://localhost:8111/v1 \\
+    --concurrency 96 --output out/full.jsonl
 """
 
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import random
+import threading
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import requests
@@ -48,14 +47,11 @@ import dedup
 import filters
 import seeds
 
-CHANNEL_FINAL = "<|start|>assistant<|channel|>final<|message|>"
-# chat template は `<|start|>assistant` で終わりチャネルヘッダを付けない。prefix は
-# 必ずヘッダの後ろに置く（ヘッダ前に置くと壊れた位置に入りモデルがヘッダを出し直す）。
-GEN_HEADER = {
-    "reasoning": "<|channel|>analysis<|message|>",
-    "no_reasoning": "<|channel|>final<|message|>",
-}
-END_TOKEN = "<|end|>"
+MODES = ("reasoning", "no_reasoning")
+THOUGHT_OPEN = "<|channel>thought\n"
+THOUGHT_CLOSE = "<channel|>"
+# 生成本文に残りうる終端トークン（EOS として止まった場合は通常出力されない）
+END_TOKENS = ("<turn|>", "<eos>")
 
 # json.dumps は U+2028 / U+2029 / U+0085 / \x0b / \x1c-\x1e をエスケープしないため、
 # これらを含むレコードは行読み取り（splitlines）で分断される。生成側で置換する。
@@ -68,9 +64,14 @@ JAPANESE_USER_SUFFIX = "\n\n日本語で、簡単な説明を添えて答えて�
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful assistant. "
-    "Reason in English in the analysis channel. "
+    "Think in English. "
     "Answer in the language of the user's request."
 )
+
+# 生成上限（mode 別）。実際の max_tokens は max_model_len - プロンプト長 で切り詰める
+MODE_MAX_TOKENS = {"reasoning": 12288, "no_reasoning": 8192}
+# 切り詰め後の生成上限がこれ未満なら、そのシードは生成しない（途中切れが確実なため）
+MIN_GEN_TOKENS = 2048
 
 
 def sanitize(text: str) -> str:
@@ -85,59 +86,64 @@ def sanitize(text: str) -> str:
     return (text or "").translate(LINE_SEPARATORS)
 
 
-def render_prompt(tokenizer, messages: list[dict], mode: str, effort: str) -> str:
-    """Harmony 形式のプロンプト文字列を組み立てる。
+def render_prompt(tokenizer, messages: list[dict], mode: str, prefix: str) -> str:
+    """Gemma 4 形式のプロンプト文字列を、生成開始ヘッダ＋prefix まで組み立てる。
 
     Args:
-        tokenizer: gpt-oss の tokenizer（chat_template を持つ）。
+        tokenizer: Gemma 4 の tokenizer（chat_template を持つ）。
         messages: chat messages（system / user）。
         mode: "reasoning" または "no_reasoning"。
-        effort: reasoning_effort（reasoning モードのみ使用）。
+        prefix: 書き出しプレフィックス。
 
     Returns:
-        生成開始チャネルヘッダまでを含む prompt 文字列。
+        プロンプト文字列。reasoning は `<|turn>model\\n<|channel>thought\\n{prefix}`、
+        no_reasoning は `<|turn>model\\n<|channel>thought\\n<channel|>{prefix}` で終わる。
     """
-    kw = {"reasoning_effort": effort} if mode == "reasoning" else {}
-    return tokenizer.apply_chat_template(
+    text = tokenizer.apply_chat_template(
         messages,
         add_generation_prompt=True,
         enable_thinking=(mode == "reasoning"),
         tokenize=False,
-        **kw,
     )
+    if mode == "reasoning":
+        text += THOUGHT_OPEN
+    return text + prefix
 
 
-def parse_completion(raw: str, mode: str, prefix: str = "") -> tuple[str, str]:
-    """vLLM の completion 本文を thinking / final に分離する。
+def parse_completion(raw: str, mode: str, prefix: str = "") -> tuple[str, str, bool]:
+    """vLLM の completion 本文を thinking / response に分離する。
 
     Args:
-        raw: 生成された生テキスト（チャネルヘッダを含む）。
+        raw: 生成された生テキスト（special token を含む）。
         mode: "reasoning" または "no_reasoning"。
         prefix: プロンプト側に置いた書き出し。生成本文は prefix の続きなので先頭に戻す。
 
     Returns:
-        (thinking, response)。reasoning なしモードでは thinking は空。
+        (thinking, response, closed)。closed は reasoning で思考の閉じタグが出たか。
+        reasoning なしモードでは thinking は空。
     """
-    raw = (prefix + raw).replace(END_TOKEN, "").strip()
+    text = prefix + raw
+    for tok in END_TOKENS:
+        text = text.replace(tok, "")
     if mode == "reasoning":
-        parts = raw.split(CHANNEL_FINAL)
-        thinking = parts[0].strip()
-        response = parts[1].strip() if len(parts) > 1 else ""
-        return thinking, response
-    return "", raw
+        if THOUGHT_CLOSE not in text:
+            return text.strip(), "", False
+        thinking, response = text.split(THOUGHT_CLOSE, 1)
+        return thinking.strip(), response.strip(), True
+    return "", text.strip(), True
 
 
-def build_session(concurrency: int) -> requests.Session:
-    """接続プールを concurrency に合わせた HTTP セッションを作る。
+def build_session(pool_size: int) -> requests.Session:
+    """接続プールを並列数に合わせた HTTP セッションを作る。
 
     Args:
-        concurrency: 並列数。
+        pool_size: 接続プールの大きさ。
 
     Returns:
         requests.Session。
     """
     session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(pool_maxsize=concurrency, max_retries=3)
+    adapter = requests.adapters.HTTPAdapter(pool_maxsize=pool_size, max_retries=3)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
@@ -147,61 +153,46 @@ def generate_one(
     session: requests.Session,
     base_url: str,
     model: str,
-    tokenizer,
-    prompt: str,
-    prefix: str,
-    mode: str,
-    effort: str,
+    text: str,
     max_tokens: int,
     timeout: int,
-    system_prompt: str,
+    sampling: dict,
 ) -> dict:
-    """1 件生成してレコード dict を返す。
+    """1 件生成して結果 dict を返す。
 
     Args:
         session: HTTP セッション。
         base_url: vLLM の `/v1` ベース URL。
         model: served model name。
-        tokenizer: Harmony レンダリング用 tokenizer。
-        prompt: 元プロンプト。
-        prefix: 書き出しプレフィックス。
-        mode: "reasoning" / "no_reasoning"。
-        effort: reasoning_effort。
+        text: レンダリング済みプロンプト。
         max_tokens: 生成上限。
         timeout: リクエストタイムアウト秒。
-        system_prompt: system メッセージ本文。
+        sampling: temperature / top_p / top_k。
 
     Returns:
-        レコード dict（filter 判定前）。失敗時は `error` に理由が入る。
+        {"error", "text", "finish_reason", "completion_tokens"}。失敗時は `error` に理由が入る。
     """
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prompt},
-    ]
-    text = render_prompt(tokenizer, messages, mode, effort) + GEN_HEADER[mode] + prefix
     payload = {
         "model": model,
         "prompt": text,
         "max_tokens": max_tokens,
-        "temperature": 1.0,
-        "top_p": 1.0,
-        # vLLM の既定（skip_special_tokens=True）は Harmony のチャネルマーカーを
-        # デコードから除き、素の `assistantfinal` になる。analysis / final の分離には
-        # special token の保持が必要。
+        **sampling,
+        # 思考の閉じタグ <channel|> は special token。既定（True）ではデコードから消え、
+        # thinking と response を分離できない。
         "skip_special_tokens": False,
     }
     try:
         resp = session.post(f"{base_url.rstrip('/')}/completions", json=payload, timeout=timeout)
         resp.raise_for_status()
-        choice = resp.json()["choices"][0]
-    except requests.RequestException as exc:
-        return {"error": f"{type(exc).__name__}: {str(exc)[:120]}"}
-    thinking, response = parse_completion(choice["text"], mode, prefix)
+        body = resp.json()
+        choice = body["choices"][0]
+    except (requests.RequestException, KeyError, ValueError) as exc:
+        return {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
     return {
         "error": "",
-        "thinking": sanitize(thinking),
-        "response": sanitize(response),
+        "text": choice.get("text", ""),
         "finish_reason": choice.get("finish_reason", ""),
+        "completion_tokens": (body.get("usage") or {}).get("completion_tokens", 0),
     }
 
 
@@ -209,8 +200,7 @@ def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Count
     """既存出力から resume 用の状態を復元する。
 
     済みキーに加え、(domain, mode) 別の通過数を数え直し、全レコードを出力順に
-    deduper へ流して重複判定の index を再構築する。中断で末尾が書きかけの行は切り捨てる
-    （次の追記が壊れた行に連結されるのを防ぐ）。
+    deduper へ流して重複判定の index を再構築する。中断で末尾が書きかけの行は切り捨てる。
 
     Args:
         path: 出力 JSONL。
@@ -241,10 +231,125 @@ def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Count
         total += 1
         domain, mode = rec.get("domain"), rec.get("mode")
         seen.add(f"{domain}|{mode}|{rec.get('seed_index')}")
-        deduper.is_duplicate(domain, rec.get("prompt", ""), rec.get("response", ""))
+        if rec.get("passed"):
+            deduper.is_duplicate(domain, rec.get("prompt", ""), rec.get("response", ""))
         if rec.get("passed") and not rec.get("duplicate"):
             kept[(domain, mode)] += 1
     return seen, kept, total
+
+
+def compute_quota(target: int, domains: list[str], sizes: dict[str, int], expected_pass: float) -> dict:
+    """(domain, mode) 別の通過数 quota を決める。
+
+    各シードは mode ごとに 1 回だけ使う（同一シード・同一 mode の再生成は近似重複になりやすい）。
+    したがって (domain, mode) の上限は `プール件数 × 想定通過率`。等分から始め、上限で
+    頭打ちになった不足分を headroom のある domain へ再配分する。
+
+    Args:
+        target: 通過数の総目標。
+        domains: 対象ドメイン。
+        sizes: ドメイン別プール件数。
+        expected_pass: 想定通過率。
+
+    Returns:
+        (domain, mode) -> quota。
+    """
+    quota: dict = {}
+    for mode in MODES:
+        want = target // 2 if mode == "reasoning" else target - target // 2
+        cap = {d: int(sizes[d] * expected_pass) for d in domains}
+        q = {d: min(want // len(domains), cap[d]) for d in domains}
+        deficit = want - sum(q.values())
+        while deficit > 0:
+            room = [d for d in domains if q[d] < cap[d]]
+            if not room:
+                break
+            add = max(deficit // len(room), 1)
+            for d in room:
+                q[d] = min(cap[d], q[d] + add)
+            deficit = want - sum(q.values())
+        for d in domains:
+            quota[(d, mode)] = q[d]
+        if deficit > 0:
+            print(f"[quota] {mode}: unreachable by {deficit} at expected_pass={expected_pass}")
+    return quota
+
+
+class Scheduler:
+    """(domain, mode) ごとのシード供給と進捗管理。
+
+    quota に対して「通過数 + 実行中 × 想定通過率」が最も遅れている (domain, mode) から
+    次のシードを出す。シードを使い切った (domain, mode) は除外し、mode 合計が目標に
+    達するまでは他の domain が quota を超えて補う。
+
+    Attributes:
+        quota: (domain, mode) -> 通過数 quota。
+        kept: (domain, mode) -> 通過数。
+        inflight: (domain, mode) -> 実行中件数。
+    """
+
+    def __init__(self, pool, domains, quota, kept, seen, rng, expected_pass, mode_target):
+        """初期化する。
+
+        Args:
+            pool: domain -> [(prompt, source)]。
+            domains: 対象ドメイン。
+            quota: (domain, mode) -> quota。
+            kept: (domain, mode) -> 既存通過数（resume）。
+            seen: 済みキー（resume）。
+            rng: 乱数生成器。
+            expected_pass: 想定通過率。
+            mode_target: mode -> 通過数目標。
+        """
+        self.pool = pool
+        self.quota = quota
+        self.kept = kept
+        self.seen = seen
+        self.expected_pass = expected_pass
+        self.mode_target = mode_target
+        self.inflight: Counter = Counter()
+        self.exhausted: set = set()
+        # (domain, mode) ごとに独立した順序。mode 間でシードを奪い合わない
+        self._order = {}
+        self._cursor = {}
+        for d in domains:
+            for m in MODES:
+                order = list(range(len(pool[d])))
+                random.Random(f"{rng.random()}").shuffle(order)
+                self._order[(d, m)] = order
+                self._cursor[(d, m)] = 0
+        self.keys = [(d, m) for d in domains for m in MODES]
+
+    def mode_done(self, mode: str) -> bool:
+        """mode の通過数が目標に届いたか（実行中の見込みを含む）。"""
+        kept = sum(c for (_, m), c in self.kept.items() if m == mode)
+        infl = sum(c for (_, m), c in self.inflight.items() if m == mode)
+        return kept + infl * self.expected_pass >= self.mode_target[mode]
+
+    def next(self):
+        """次に生成する (domain, mode, seed_index) を返す。なければ None。"""
+        while True:
+            live = [k for k in self.keys if k not in self.exhausted and not self.mode_done(k[1])]
+            if not live:
+                return None
+
+            def lag(k):
+                q = max(self.quota.get(k, 0), 1)
+                return (self.kept[k] + self.inflight[k] * self.expected_pass) / q
+
+            key = min(live, key=lag)
+            order, i = self._order[key], self._cursor[key]
+            while i < len(order) and f"{key[0]}|{key[1]}|{order[i]}" in self.seen:
+                i += 1
+            if i >= len(order):
+                self._cursor[key] = i
+                self.exhausted.add(key)
+                print(f"[exhausted] {key[0]}/{key[1]} kept {self.kept[key]}", flush=True)
+                continue
+            self._cursor[key] = i + 1
+            idx = order[i]
+            self.seen.add(f"{key[0]}|{key[1]}|{idx}")
+            return key[0], key[1], idx
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -258,180 +363,154 @@ def run(args: argparse.Namespace) -> dict:
     """
     rng = random.Random(args.seed)
     pool = seeds.load_seed_pool()
-    sampler = seeds.SeedPool(pool, rng)
-    session = build_session(args.concurrency)
     tokenizer = AutoTokenizer.from_pretrained(args.model, local_files_only=True)
+    base_urls = [u for u in args.base_urls.split(",") if u]
+    workers = args.concurrency * len(base_urls)
+    session = build_session(workers)
+    url_cycle = itertools.cycle(base_urls)
+    sampling = {"temperature": args.temperature, "top_p": args.top_p, "top_k": args.top_k}
 
     excluded = {d for d in args.exclude_domains.split(",") if d}
     domains = [d for d in sorted(pool) if d not in excluded]
-    if not domains:
-        return {"total": 0, "kept": 0, "reasons": {}, "by_domain_mode": {}}
-
-    # ドメイン別 quota（通過数）。小プール域は expected_pass 換算の上限で頭打ちになり、
-    # 不足分は headroom を持つドメインへ再配分する
-    share = args.target_kept // len(domains)
-    cap_kept = {d: int(sampler.size(d) * args.max_reuse * args.expected_pass) for d in domains}
-    quota = {d: min(share, cap_kept[d]) for d in domains}
-    deficit = args.target_kept - sum(quota.values())
-    while deficit > 0:
-        room = [d for d in domains if quota[d] < cap_kept[d]]
-        if not room:
-            break
-        add = deficit // len(room) or 1
-        for d in room:
-            quota[d] = min(cap_kept[d], quota[d] + add)
-        deficit = args.target_kept - sum(quota.values())
-    for d in domains:
-        print(f"[quota] {d}: target kept {quota[d]} (pool {sampler.size(d)}, cap {cap_kept[d]})")
-    if deficit:
-        print(f"[quota] unreachable: {deficit} short (pool caps)")
+    sizes = {d: len(pool[d]) for d in domains}
+    quota = compute_quota(args.target_kept, domains, sizes, args.expected_pass)
+    for (d, m), q in sorted(quota.items()):
+        print(f"[quota] {d}/{m}: target kept {q} (pool {sizes[d]})")
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     deduper = dedup.Deduplicator(threshold=args.dedup_threshold)
     seen, kept_dm, resumed = load_state(out_path, deduper)
+    mode_target = {"reasoning": args.target_kept // 2, "no_reasoning": args.target_kept - args.target_kept // 2}
+    sched = Scheduler(pool, domains, quota, kept_dm, seen, rng, args.expected_pass, mode_target)
 
-    stats: Counter = Counter()
+    stats: Counter = Counter(total=resumed, kept=sum(kept_dm.values()))
     reason_counter: Counter = Counter()
-    domain_mode: Counter = Counter()
-    kept_by_domain: Counter = Counter()
-    effort_counter: Counter = Counter()
-    for (d, _), c in kept_dm.items():
-        kept_by_domain[d] += c
-    stats["total"] = resumed
-    stats["kept"] = sum(kept_dm.values())
     if resumed:
         print(f"[resume] {resumed} records, kept {stats['kept']}", flush=True)
     next_report = (stats["total"] // args.chunk_size + 1) * args.chunk_size
+    started = time.time()
+    lock = threading.Lock()
 
-    with out_path.open("a", encoding="utf-8") as fh:
-        for domain in domains:
-            half = quota[domain] // 2
-            tasks = [(domain, "reasoning", half), (domain, "no_reasoning", quota[domain] - half)]
-            for domain, mode, count in tasks:
-                if count <= 0:
-                    continue
-                generated = 0
-                cap = sampler.size(domain) * args.max_reuse
-                while kept_dm[(domain, mode)] < count and generated < cap:
-                    batch = min(args.concurrency, cap - generated)
-                    candidates = []
-                    for _ in range(batch):
-                        prompt, seed_index, seed_source = sampler.sample(domain)
-                        if domain == "japanese" and not seeds.is_japanese_text(prompt):
-                            prompt += JAPANESE_USER_SUFFIX
-                        key = f"{domain}|{mode}|{seed_index}"
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        effort = seeds.sample_effort(rng) if mode == "reasoning" else ""
-                        candidates.append(
-                            (prompt, seed_index, seed_source, effort, seeds.sample_prefix(domain, mode, rng, prompt))
-                        )
-                    if not candidates:
-                        break
-                    generated += len(candidates)
-                    def limit(effort: str) -> int:
-                        """effort ごとの生成上限を返す。
+    def submit(ex):
+        """シードを 1 件取り出して投入する。投入できなければ False。"""
+        while True:
+            item = sched.next()
+            if item is None:
+                return None
+            domain, mode, idx = item
+            prompt, source = pool[domain][idx]
+            if domain == "japanese" and not seeds.is_japanese_text(prompt):
+                prompt += JAPANESE_USER_SUFFIX
+            prefix = seeds.sample_prefix(domain, mode, rng, prompt)
+            # --system-prompt "" で system ターンを置かない（学習データに無い隠れ指示を排除する）
+            messages = [{"role": "system", "content": args.system_prompt}] if args.system_prompt else []
+            messages.append({"role": "user", "content": prompt})
+            text = render_prompt(tokenizer, messages, mode, prefix)
+            n_prompt = len(tokenizer(text, add_special_tokens=False)["input_ids"])
+            max_tokens = min(MODE_MAX_TOKENS[mode], args.max_model_len - n_prompt - 16)
+            if max_tokens < MIN_GEN_TOKENS:
+                stats["skipped_long_prompt"] += 1
+                continue
+            sched.inflight[(domain, mode)] += 1
+            meta = {
+                "prompt": prompt,
+                "prefix": prefix,
+                "mode": mode,
+                "domain": domain,
+                "seed_source": source,
+                "seed_index": idx,
+                "prompt_tokens": n_prompt,
+            }
+            fut = ex.submit(
+                generate_one, session, next(url_cycle), args.served_model_name, text, max_tokens, args.timeout, sampling
+            )
+            return fut, meta
 
-                        Args:
-                            effort: reasoning_effort（no_reasoning では空）。
-
-                        Returns:
-                            max_tokens。
-                        """
-                        return seeds.EFFORT_MAX_TOKENS.get(effort, args.max_tokens) if effort else args.max_tokens
-
-                    with ThreadPoolExecutor(max_workers=len(candidates)) as ex:
-                        futures = [
-                            ex.submit(
-                                generate_one,
-                                session,
-                                args.base_url,
-                                args.served_model_name,
-                                tokenizer,
-                                prompt,
-                                prefix,
-                                mode,
-                                effort,
-                                limit(effort),
-                                args.timeout,
-                                args.system_prompt,
-                            )
-                            for prompt, seed_index, seed_source, effort, prefix in candidates
-                        ]
-                        for (prompt, seed_index, seed_source, effort, prefix), fut in zip(candidates, futures):
-                            result = fut.result()
-                            rec = {
-                                "prompt": prompt,
-                                "prefix": prefix,
-                                "mode": mode,
-                                "reasoning_effort": effort,
-                                "thinking": result.get("thinking", ""),
-                                "response": result.get("response", ""),
-                                "finish_reason": result.get("finish_reason", ""),
-                                "error": result.get("error", ""),
-                                "domain": domain,
-                                "lang": filters.detect_language(prompt),
-                                "seed_source": seed_source,
-                                "seed_index": seed_index,
-                            }
-                            verdict = filters.evaluate(rec)
-                            rec["passed"] = verdict.passed
-                            rec["reasons"] = verdict.reasons
-                            rec["duplicate"] = (
-                                deduper.is_duplicate(domain, rec["prompt"], rec["response"]) or ""
-                            )
-                            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                            stats["total"] += 1
-                            domain_mode[(domain, mode)] += 1
-                            if effort:
-                                effort_counter[effort] += 1
-                            if not verdict.passed:
-                                for r in verdict.reasons:
-                                    reason_counter[r.split(":")[0]] += 1
-                            elif rec["duplicate"]:
-                                reason_counter[rec["duplicate"]] += 1
-                            else:
-                                stats["kept"] += 1
-                                kept_by_domain[domain] += 1
-                                kept_dm[(domain, mode)] += 1
-                    # バッチごとに flush し、中断時の損失を 1 バッチに抑える
-                    fh.flush()
-                    if stats["total"] >= next_report:
-                        next_report = (stats["total"] // args.chunk_size + 1) * args.chunk_size
-                        print(
-                            f"[progress] {time.strftime('%Y-%m-%d %H:%M:%S')} total {stats['total']} "
-                            f"kept {stats['kept']} ({domain}/{mode} {kept_dm[(domain, mode)]}/{count})",
-                            flush=True,
-                        )
-        fh.flush()
+    with out_path.open("a", encoding="utf-8") as fh, ThreadPoolExecutor(max_workers=workers) as ex:
+        pending = {}
+        while True:
+            while len(pending) < workers:
+                item = submit(ex)
+                if item is None:
+                    break
+                pending[item[0]] = item[1]
+            if not pending:
+                break
+            done, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                meta = pending.pop(fut)
+                result = fut.result()
+                key = (meta["domain"], meta["mode"])
+                sched.inflight[key] -= 1
+                thinking, response, closed = parse_completion(result.get("text", ""), meta["mode"], meta["prefix"])
+                rec = {
+                    **meta,
+                    "thinking": sanitize(thinking),
+                    "response": sanitize(response),
+                    "thinking_closed": closed,
+                    "finish_reason": result.get("finish_reason", ""),
+                    "completion_tokens": result.get("completion_tokens", 0),
+                    "error": result.get("error", ""),
+                    "lang": filters.detect_language(meta["prompt"]),
+                    "model": args.model,
+                }
+                verdict = filters.evaluate(rec)
+                rec["passed"] = verdict.passed
+                rec["reasons"] = verdict.reasons
+                rec["duplicate"] = ""
+                if verdict.passed:
+                    rec["duplicate"] = deduper.is_duplicate(meta["domain"], rec["prompt"], rec["response"]) or ""
+                with lock:
+                    fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                stats["total"] += 1
+                if not verdict.passed:
+                    for r in verdict.reasons:
+                        reason_counter[r.split(":")[0]] += 1
+                elif rec["duplicate"]:
+                    reason_counter[rec["duplicate"]] += 1
+                else:
+                    stats["kept"] += 1
+                    kept_dm[key] += 1
+            fh.flush()
+            if stats["total"] >= next_report:
+                next_report = (stats["total"] // args.chunk_size + 1) * args.chunk_size
+                rate = (stats["total"] - resumed) / max(time.time() - started, 1)
+                print(
+                    f"[progress] {time.strftime('%Y-%m-%d %H:%M:%S')} total {stats['total']} "
+                    f"kept {stats['kept']} ({stats['kept'] / max(stats['total'], 1):.0%}) "
+                    f"{rate:.2f} rec/s | top reasons {dict(reason_counter.most_common(4))}",
+                    flush=True,
+                )
 
     return {
         "total": stats["total"],
         "kept": stats["kept"],
+        "skipped_long_prompt": stats["skipped_long_prompt"],
         "reasons": dict(reason_counter),
-        "by_domain": {d: kept_by_domain[d] for d in domains},
-        "by_domain_mode": {f"{d}/{m}": c for (d, m), c in sorted(domain_mode.items())},
-        "by_effort": dict(effort_counter),
+        "kept_by_domain_mode": {f"{d}/{m}": c for (d, m), c in sorted(kept_dm.items())},
+        "exhausted": sorted(f"{d}/{m}" for d, m in sched.exhausted),
     }
 
 
 def main() -> None:
     """CLI エントリポイント。"""
-    parser = argparse.ArgumentParser(description="gpt-oss-20b 自己蒸留データ生成")
+    parser = argparse.ArgumentParser(description="gemma-4-26B-A4B-it 自己蒸留データ生成")
     parser.add_argument("--target-kept", type=int, default=1000, help="通過数の目標")
-    parser.add_argument("--base-url", default="http://localhost:8000/v1")
-    parser.add_argument("--model", default="openai/gpt-oss-20b", help="tokenizer 読み込み用の HF 模型 ID")
-    parser.add_argument("--served-model-name", default="gpt-oss-20b", help="vLLM の served model name")
+    parser.add_argument("--base-urls", default="http://localhost:8110/v1,http://localhost:8111/v1",
+                        help="vLLM の /v1 URL（カンマ区切り。GPU ごとに 1 サーバー）")
+    parser.add_argument("--model", default="google/gemma-4-26B-A4B-it", help="tokenizer 読み込み用の HF モデル ID")
+    parser.add_argument("--served-model-name", default="gemma-4-26b-a4b-it", help="vLLM の served model name")
     parser.add_argument("--output", default="out/pilot.jsonl")
-    parser.add_argument("--concurrency", type=int, default=8)
-    parser.add_argument("--max-tokens", type=int, default=4096, help="no_reasoning モードの生成上限")
-    parser.add_argument("--timeout", type=int, default=180)
-    parser.add_argument("--chunk-size", type=int, default=1000, help="flush・進捗表示の interval")
+    parser.add_argument("--concurrency", type=int, default=64, help="エンドポイントあたりの同時リクエスト数")
+    parser.add_argument("--max-model-len", type=int, default=16384, help="vLLM の max-model-len と揃える")
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top-p", type=float, default=0.95)
+    parser.add_argument("--top-k", type=int, default=64)
+    parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--chunk-size", type=int, default=1000, help="進捗表示の interval")
     parser.add_argument("--dedup-threshold", type=float, default=0.80)
-    parser.add_argument("--max-reuse", type=int, default=10, help="1 シードの再利用上限（quota 上限算出用）")
-    parser.add_argument("--expected-pass", type=float, default=0.5, help="quota 換算用の想定通過率")
+    parser.add_argument("--expected-pass", type=float, default=0.8, help="quota 換算用の想定通過率")
     parser.add_argument("--exclude-domains", default="dialogue")
     parser.add_argument("--system-prompt", default=DEFAULT_SYSTEM_PROMPT)
     parser.add_argument("--seed", type=int, default=42)

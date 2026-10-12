@@ -1,6 +1,6 @@
 """プロンプトシードプールと書き出し（プレフィックス）プール。
 
-シードは ws1-arc の HuggingFace キャッシュからオフラインで読む（ネットワーク往復なし）。
+シードは実行ホストの HuggingFace キャッシュから読む（ネットワーク往復なし）。
 10 万件規模ではプールが尽きるため、ドメイン別の quota はプールサイズで上限をかける。
 
 ドメインは Curator の指定に沿って 5 系統:
@@ -96,9 +96,11 @@ REASONING_PREFIX_POOLS: dict[str, list[str]] = {
         "I restate the given constraints before computing",
     ],
     "japanese": [
-        "Let me restate the request",
+        # 旧 "Let me restate the request" は依頼文を日本語のまま復唱させ、思考が日本語化した。
+        # 旧 "The user writes in Japanese, ..." は英語シード＋日本語指示が大半の japanese 域では事実に反する
         "First, confirm what the user is asking for",
-        "The user writes in Japanese, so the answer must be in Japanese",
+        "Let me break the task into steps",
+        "Let me work through this in English, then write the answer in Japanese",
     ],
     "dialogue": [
         "Let me restate the context",
