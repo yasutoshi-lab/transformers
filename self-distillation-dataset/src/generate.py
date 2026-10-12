@@ -238,18 +238,43 @@ def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Count
     return seen, kept, total
 
 
-def compute_quota(target: int, domains: list[str], sizes: dict[str, int], expected_pass: float) -> dict:
+def parse_ratio(spec: str, domains: list[str]) -> dict[str, float]:
+    """"math=0.2,code=0.3" 形式の構成比を解釈し、合計 1 に正規化する。
+
+    Args:
+        spec: 構成比の指定。空ならドメイン等分。
+        domains: 対象ドメイン。
+
+    Returns:
+        domain -> 比率。
+
+    Raises:
+        ValueError: 指定に無いドメイン・プールに無いドメインがある場合。
+    """
+    if not spec:
+        return {d: 1 / len(domains) for d in domains}
+    ratio = {k.strip(): float(v) for k, v in (item.split("=") for item in spec.split(",") if item)}
+    if set(ratio) != set(domains):
+        raise ValueError(f"--domain-ratio {sorted(ratio)} does not match domains {sorted(domains)}")
+    total = sum(ratio.values())
+    return {d: ratio[d] / total for d in domains}
+
+
+def compute_quota(
+    target: int, domains: list[str], sizes: dict[str, int], expected_pass: float, ratio: dict[str, float]
+) -> dict:
     """(domain, mode) 別の通過数 quota を決める。
 
     各シードは mode ごとに 1 回だけ使う（同一シード・同一 mode の再生成は近似重複になりやすい）。
-    したがって (domain, mode) の上限は `プール件数 × 想定通過率`。等分から始め、上限で
-    頭打ちになった不足分を headroom のある domain へ再配分する。
+    したがって (domain, mode) の上限は `プール件数 × 想定通過率`。構成比どおりに割り当て、
+    上限で頭打ちになった不足分は headroom のある domain へ構成比に比例して再配分する。
 
     Args:
         target: 通過数の総目標。
         domains: 対象ドメイン。
         sizes: ドメイン別プール件数。
         expected_pass: 想定通過率。
+        ratio: domain -> 構成比（合計 1）。
 
     Returns:
         (domain, mode) -> quota。
@@ -258,15 +283,15 @@ def compute_quota(target: int, domains: list[str], sizes: dict[str, int], expect
     for mode in MODES:
         want = target // 2 if mode == "reasoning" else target - target // 2
         cap = {d: int(sizes[d] * expected_pass) for d in domains}
-        q = {d: min(want // len(domains), cap[d]) for d in domains}
+        q = {d: min(int(want * ratio[d]), cap[d]) for d in domains}
         deficit = want - sum(q.values())
         while deficit > 0:
             room = [d for d in domains if q[d] < cap[d]]
             if not room:
                 break
-            add = max(deficit // len(room), 1)
+            weight = sum(ratio[d] for d in room)
             for d in room:
-                q[d] = min(cap[d], q[d] + add)
+                q[d] = min(cap[d], q[d] + max(int(deficit * ratio[d] / weight), 1))
             deficit = want - sum(q.values())
         for d in domains:
             quota[(d, mode)] = q[d]
@@ -373,7 +398,8 @@ def run(args: argparse.Namespace) -> dict:
     excluded = {d for d in args.exclude_domains.split(",") if d}
     domains = [d for d in sorted(pool) if d not in excluded]
     sizes = {d: len(pool[d]) for d in domains}
-    quota = compute_quota(args.target_kept, domains, sizes, args.expected_pass)
+    ratio = parse_ratio(args.domain_ratio, domains)
+    quota = compute_quota(args.target_kept, domains, sizes, args.expected_pass, ratio)
     for (d, m), q in sorted(quota.items()):
         print(f"[quota] {d}/{m}: target kept {q} (pool {sizes[d]})")
 
@@ -511,7 +537,12 @@ def main() -> None:
     parser.add_argument("--chunk-size", type=int, default=1000, help="進捗表示の interval")
     parser.add_argument("--dedup-threshold", type=float, default=0.80)
     parser.add_argument("--expected-pass", type=float, default=0.8, help="quota 換算用の想定通過率")
-    parser.add_argument("--exclude-domains", default="dialogue")
+    parser.add_argument("--exclude-domains", default="")
+    parser.add_argument(
+        "--domain-ratio",
+        default="math=0.2,japanese=0.1,english=0.1,general_knowledge=0.3,code=0.3",
+        help="通過数の構成比（Curator 判断 2026-10-12）。空ならドメイン等分",
+    )
     parser.add_argument("--system-prompt", default=DEFAULT_SYSTEM_PROMPT)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--upload-to-hf", default="")

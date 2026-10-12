@@ -8,9 +8,22 @@ gpt-oss-20b 版（`gpt-oss-self-distill` ブランチ）の方式を Gemma 4 へ
 
 - reasoning あり / なしを同量生成
 - 途中切れ・言語混入・重複を規則ベースで除去（モデルによる採点は使わない）
-- 一般知識・コード・数学・日本語の 4 ドメイン（対話は除外）
+- 5 ドメインを構成比どおりに生成（数学 20% / 日本語 10% / 英語 10% / 一般知識 30% / コード 30%）
+- シードは Apache-2.0 のデータセットに限る（使うのはプロンプトのみ）
 - 多様な書き出し（プレフィックス）
 - 目標は**通過数** 50 万件
+
+## シード
+
+| ドメイン | データセット（すべて Apache-2.0） | 絞り込み |
+|---|---|---|
+| math | `AI-MO/NuminaMath-CoT` | 15 万件に間引き |
+| code | `m-a-p/CodeFeedback-Filtered-Instruction`、`glaiveai/glaive-code-assistant-v3` | glaive は 5 万件に間引き |
+| general_knowledge | `TIGER-Lab/WebInstructSub`、`HuggingFaceTB/smoltalk`（smol-magpie-ultra） | WebInstructSub は socratic / stackexchange から 6 万件。magpie は情報探索・助言・推論・データ分析 |
+| english | `llm-jp/oasst2-33k-en`、`HuggingFaceTB/smoltalk`（smol-magpie-ultra） | magpie は作文・編集・ブレストから 6 万件 |
+| japanese | `llm-jp/oasst2-33k-ja`、`llm-jp/magpie-sft-v1.0`、`Aratako/Magpie-Tanuki-8B-97k` | 仮名を含む依頼文のみ。magpie-sft は 4 万件、Tanuki は 3 万件に間引き |
+
+japanese 以外のドメインは、仮名・漢字を含む依頼文を除く（中国語の依頼文が混ざるため）。
 
 ## gpt-oss 版からの変更点
 
@@ -23,6 +36,7 @@ gpt-oss-20b 版（`gpt-oss-self-distill` ブランチ）の方式を Gemma 4 へ
 | 系列長 | 8,192 | 16,384。生成上限（思考あり 12,288 / なし 8,192）をプロンプト長から逆算して切り詰める |
 | 並列 | 1 サーバー・ドメイン順に処理 | 複数サーバーへ round-robin。(domain, mode) の進捗が quota 比で遅いものから供給 |
 | シードの使い方 | 1 シード最大 10 回の想定で quota を算出 | 1 シードは mode ごとに 1 回。プールを使い切った (domain, mode) は他が補う |
+| 構成比 | ドメイン等分 | `--domain-ratio` で指定（既定 20/10/10/30/30） |
 
 ## 使い方
 
@@ -83,8 +97,10 @@ cd src && ../.venv/bin/python generate.py --target-kept 2000 --concurrency 128 \
 - 特権情報（参照解）は与えない。自己蒸留で特権情報を与えると thinking モデルで
   fork suppression により性能が劣化する（wiki 側 `sources/rethinking-on-policy-self-distillation-for-thinking-models`）。
 - 書き出しは思考ヘッダの後ろに置く（gpt-oss 版で、ヘッダ前に置くと継ぎ目が記号断片になった）。
-- 思考は英語 only（引用符外の仮名・漢字 3% まで）。japanese 域の思考ありは、英語で推論した後に
-  日本語の回答を思考内で下書きする例が多く、この判定で 6 割前後が落ちる（パイロット実測）。
-- japanese 域の言語指示は system ではなくユーザープロンプト末尾に付け、記録に残す。
+- 思考は英語（引用符外の仮名・漢字 3% まで）。ただし japanese 域は、英語で推論した後に
+  日本語の回答を思考内で下書きする例が多く、一律の基準では思考ありの 7 割弱が落ちた。
+  japanese 域では思考の前半に 5%、全体に 30% までの日本語を許す。
+- 英語のシードを japanese 域に回す場合は、言語指示を system ではなくユーザープロンプト末尾に
+  付け、記録に残す（日本語ネイティブのシードには付けない）。
 - `english_cot_leak` は gpt-oss 版の `We (need|can|must) …` から、メタ推論の言い回し
   （"The user asks …" 等）に絞った。Gemma 4 の英語の解説文を誤検出したため。

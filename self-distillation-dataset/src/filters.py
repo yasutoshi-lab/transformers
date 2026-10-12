@@ -150,27 +150,51 @@ def is_language_mixed(prompt: str, response: str, domain: str = "") -> tuple[boo
 _QUOTED = re.compile(r"「[^」]*」|『[^』]*』|\"[^\"\n]*\"|“[^”\n]*”")
 # 引用符外の thinking に許す仮名・漢字の割合（下書きの数語など）。Curator 判断 2026-10-11
 THINKING_JA_RATIO_LIMIT = 0.03
+# japanese 域の緩和（Curator 判断 2026-10-12）。英語で推論した後に日本語の回答を thinking 内で
+# 下書きする例が多く、上の一律基準では思考ありの 7 割弱が落ちた。推論部分にあたる前半は英語を
+# 求めたまま、全体では下書きぶんの日本語を許す
+JAPANESE_THINKING_JA_RATIO_LIMIT = 0.30
+JAPANESE_THINKING_HEAD_JA_RATIO_LIMIT = 0.05
 
 
-def thinking_is_english(thinking: str) -> bool:
-    """思考チャネルが実質英語のみで書かれているかを判定する。
+def _ja_ratio(text: str) -> float:
+    """文字種カウント上の仮名・漢字の割合を返す。
 
-    Curator 方針: reasoning ありモードの `analysis` は英語 only に統一する。
-    ただし japanese 域では、プロンプト中の日本語語句や下書きが thinking に現れるため、
-    引用符・コード内の日本語は除外し、引用符外の仮名・漢字が
-    `THINKING_JA_RATIO_LIMIT` 以下なら英語とみなす。
+    Args:
+        text: 判定対象。
+
+    Returns:
+        仮名・漢字の割合。文字が無ければ 0.0。
+    """
+    counts = script_counts(text)
+    total = sum(counts.values())
+    if total == 0:
+        return 0.0
+    return (counts["hiragana"] + counts["katakana"] + counts["kanji"]) / total
+
+
+def thinking_is_english(thinking: str, domain: str = "") -> bool:
+    """思考チャネルが実質英語で書かれているかを判定する。
+
+    Curator 方針: reasoning ありモードの thinking は英語で書く。引用符・コード内の日本語は
+    除外し、引用符外の仮名・漢字が `THINKING_JA_RATIO_LIMIT` 以下なら英語とみなす。
+    japanese 域は回答の下書きを許すため、前半が `JAPANESE_THINKING_HEAD_JA_RATIO_LIMIT`
+    以下かつ全体が `JAPANESE_THINKING_JA_RATIO_LIMIT` 以下なら英語とみなす。
 
     Args:
         thinking: 思考チャネル本文。
+        domain: 対象ドメイン。
 
     Returns:
-        実質英語のみなら True。
+        実質英語なら True。
     """
     body = _QUOTED.sub(" ", strip_code_blocks(thinking))
-    counts = script_counts(body)
-    ja = counts["hiragana"] + counts["katakana"] + counts["kanji"]
-    total = sum(counts.values())
-    return total == 0 or ja / total <= THINKING_JA_RATIO_LIMIT
+    if domain == "japanese":
+        return (
+            _ja_ratio(body) <= JAPANESE_THINKING_JA_RATIO_LIMIT
+            and _ja_ratio(body[: len(body) // 2]) <= JAPANESE_THINKING_HEAD_JA_RATIO_LIMIT
+        )
+    return _ja_ratio(body) <= THINKING_JA_RATIO_LIMIT
 
 
 _JUNK_CHARS = set("…・-–—”“\"?.")
@@ -235,7 +259,7 @@ class FilterResult:
     """1 サンプルのフィルタ判定結果。
 
     Attributes:
-        passed: 合格是否。
+        passed: 合格かどうか。
         reasons: 不合格理由（合格時は空）。
     """
 
@@ -292,7 +316,7 @@ def evaluate(record: dict) -> FilterResult:
             reasons.append("thinking_unclosed")
         elif not thinking:
             reasons.append("empty_thinking")
-        elif not thinking_is_english(thinking):
+        elif not thinking_is_english(thinking, domain):
             reasons.append("thinking_not_english")
         elif head_is_junk(thinking):
             reasons.append("junk_thinking_head")
