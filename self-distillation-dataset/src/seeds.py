@@ -56,7 +56,7 @@ SEED_SOURCES: list[dict] = [
         "dataset": "glaiveai/glaive-code-assistant-v3",
         "field": "question",
         "domain": "code",
-        "sample": 62_000,
+        "sample": 74_000,
     },
     {"dataset": "TIGER-Lab/MathInstruct", "field": "instruction", "domain": "math"},
     {"dataset": "openai/gsm8k", "config": "main", "field": "question", "domain": "math"},
