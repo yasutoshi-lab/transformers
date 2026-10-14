@@ -257,13 +257,14 @@ def run(args: argparse.Namespace) -> dict:
         統計 dict。
     """
     rng = random.Random(args.seed)
-    pool = seeds.load_seed_pool()
+    excluded = {d for d in args.exclude_domains.split(",") if d}
+    # 除外ドメインのシードは読まない（大規模ソースの読み込みを省く）
+    pool = seeds.load_seed_pool({src["domain"] for src in seeds.SEED_SOURCES} - excluded)
     sampler = seeds.SeedPool(pool, rng)
     session = build_session(args.concurrency)
     tokenizer = AutoTokenizer.from_pretrained(args.model, local_files_only=True)
 
-    excluded = {d for d in args.exclude_domains.split(",") if d}
-    domains = [d for d in sorted(pool) if d not in excluded]
+    domains = sorted(pool)
     if not domains:
         return {"total": 0, "kept": 0, "reasons": {}, "by_domain_mode": {}}
 
@@ -281,6 +282,12 @@ def run(args: argparse.Namespace) -> dict:
         for d in room:
             quota[d] = min(cap_kept[d], quota[d] + add)
         deficit = args.target_kept - sum(quota.values())
+    # --domain-quota で指定したドメインは自動配分を上書きする（プール上限より優先）
+    for item in filter(None, args.domain_quota.split(",")):
+        name, value = item.split("=")
+        if name not in quota:
+            raise ValueError(f"--domain-quota: unknown domain {name!r}")
+        quota[name] = int(value)
     for d in domains:
         print(f"[quota] {d}: target kept {quota[d]} (pool {sampler.size(d)}, cap {cap_kept[d]})")
     if deficit:
@@ -421,6 +428,9 @@ def main() -> None:
     """CLI エントリポイント。"""
     parser = argparse.ArgumentParser(description="gpt-oss-20b 自己蒸留データ生成")
     parser.add_argument("--target-kept", type=int, default=1000, help="通過数の目標")
+    parser.add_argument(
+        "--domain-quota", default="", help="ドメイン別の通過数（例: code=50000,english=25500）。自動配分を上書き"
+    )
     parser.add_argument("--base-url", default="http://localhost:8000/v1")
     parser.add_argument("--model", default="openai/gpt-oss-20b", help="tokenizer 読み込み用の HF 模型 ID")
     parser.add_argument("--served-model-name", default="gpt-oss-20b", help="vLLM の served model name")

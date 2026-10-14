@@ -1,15 +1,15 @@
 """プロンプトシードプールと書き出し（プレフィックス）プール。
 
-シードは ws1-arc の HuggingFace キャッシュからオフラインで読む（ネットワーク往復なし）。
-10 万件規模ではプールが尽きるため、ドメイン別の quota はプールサイズで上限をかける。
+シードは ws1-arc の HuggingFace キャッシュから読む（未取得なら初回にダウンロードする）。
+プールが尽きる規模では、ドメイン別の quota はプールサイズで上限をかける。
 
-ドメインは Curator の指定に沿って 5 系統:
-general_knowledge / code / math / japanese / dialogue
+ドメインは Curator の指定に沿って 6 系統:
+general_knowledge / code / math / japanese / english / dialogue
 
 設計判断（2026-10-10 のレビューに基づく）:
 
-- `openai/humaneval` は gated（HTTP 401）で、この環境に HF_TOKEN が无いため取得できない。
-  非 gated 名義の `openai/openai_humaneval` と `google-research-datasets/mbpp` を使う。
+- シードは train split のみ。2026-10-14、cais/mmlu と openai/openai_humaneval の test split を
+  使っていたため外した（評価データの混入）。general_knowledge は WebInstructSub に置き換えた。
 - プールが空のドメインは黙って skip しない（quota が静かに再配分され、実行は健全に見えて
   ドメインが欠落する）。`load_seed_pool()` は RuntimeError を出す。
 - prefix はチャネルで分ける。`analysis` チャネルに回答調の書き出しを注入すると、モデルが
@@ -24,20 +24,55 @@ from __future__ import annotations
 import random
 from collections import defaultdict
 
-# (dataset, config, field, domain) — field はプロンプトとして使う列
-SEED_SOURCES: list[tuple[str, str, str, str]] = [
-    ("cais/mmlu", "all", "question", "general_knowledge"),
-    ("openai/openai_humaneval", "openai_humaneval", "prompt", "code"),
-    ("google-research-datasets/mbpp", "full", "text", "code"),
-    ("TIGER-Lab/MathInstruct", "default", "instruction", "math"),
-    ("openai/gsm8k", "main", "question", "math"),
-    ("Inoichan/OpenO1-SFT-JA", "default", "instruction", "japanese"),
-    ("Kendamarron/OpenMathInstruct-2-ja-CoT", "default", "instruction", "japanese"),
-    ("yongtae-jp/orca_dpo_pairs_ja", "default", "prompt", "dialogue"),
-]
+import filters
 
-# 列名がデータセットごとに違うため、この順で最初の命中を使う
-FIELD_FALLBACKS = ["instruction", "question", "prompt", "problem"]
+# 学習データの汚染を避けるため、シードは train split だけから取る（test / validation は使わない）
+SEED_SPLIT = "train"
+# 大規模ソースを間引くときの固定シード（resume 時もプールが同じになる）
+SAMPLE_SEED = 42
+
+
+def _first_user_turn(row: dict) -> str:
+    """会話形式の行から最初の user 発話を取り出す。
+
+    Args:
+        row: `conversations` 列を持つ行。要素は {"from","value"} か {"role","content"}。
+
+    Returns:
+        最初の user 発話。見つからなければ空文字。
+    """
+    for turn in row.get("conversations") or []:
+        role = turn.get("from") or turn.get("role")
+        if role in ("human", "user"):
+            return str(turn.get("value") or turn.get("content") or "")
+    return ""
+
+
+# dataset: HF 名 / config: None なら既定 / field: プロンプト列名か抽出関数 / domain /
+# keep: 行の採否（None なら全件）/ sample: 固定シードで間引く件数（None なら全件）
+SEED_SOURCES: list[dict] = [
+    {"dataset": "google-research-datasets/mbpp", "config": "full", "field": "text", "domain": "code"},
+    {
+        "dataset": "glaiveai/glaive-code-assistant-v3",
+        "field": "question",
+        "domain": "code",
+        "sample": 62_000,
+    },
+    {"dataset": "TIGER-Lab/MathInstruct", "field": "instruction", "domain": "math"},
+    {"dataset": "openai/gsm8k", "config": "main", "field": "question", "domain": "math"},
+    {"dataset": "Inoichan/OpenO1-SFT-JA", "field": "instruction", "domain": "japanese"},
+    {"dataset": "Kendamarron/OpenMathInstruct-2-ja-CoT", "field": "instruction", "domain": "japanese"},
+    {"dataset": "llm-jp/oasst2-33k-en", "field": _first_user_turn, "domain": "english"},
+    {
+        "dataset": "TIGER-Lab/WebInstructSub",
+        "field": "question",
+        "domain": "general_knowledge",
+        # mathstackexchange は math ドメインと重なるので除外
+        "keep": lambda row: row["source"] in {"socratic", "stackexchange"},
+        "sample": 62_000,
+    },
+    {"dataset": "yongtae-jp/orca_dpo_pairs_ja", "field": "prompt", "domain": "dialogue"},
+]
 
 # final チャネル用の書き出し（回答調）
 PREFIX_POOLS: dict[str, list[str]] = {
@@ -68,6 +103,13 @@ PREFIX_POOLS: dict[str, list[str]] = {
         "日本語で答えます",
         "以下に整理します",
         "依頼の趣旨を踏まえると",
+    ],
+    "english": [
+        "Sure",
+        "Here is a clear answer",
+        "Short answer first",
+        "Good question",
+        "Let me break this down",
     ],
     "dialogue": [
         "承知しました",
@@ -100,6 +142,11 @@ REASONING_PREFIX_POOLS: dict[str, list[str]] = {
         "First, confirm what the user is asking for",
         "The user writes in Japanese, so the answer must be in Japanese",
     ],
+    "english": [
+        "Let me restate what the user wants",
+        "First, figure out what kind of answer fits here",
+        "The user is asking for",
+    ],
     "dialogue": [
         "Let me restate the context",
         "First, what the user expects from this turn",
@@ -114,46 +161,52 @@ REASONING_EFFORT_MIX: dict[str, float] = {"medium": 0.50, "low": 0.25, "high": 0
 EFFORT_MAX_TOKENS: dict[str, int] = {"low": 2048, "medium": 4096, "high": 6144}
 
 
-def load_seed_pool() -> dict[str, list[str]]:
-    """キャッシュ済み HF データセットからドメイン別プロンプトプールを組み立てる。
+def load_seed_pool(domains: set[str] | None = None) -> dict[str, list[tuple[str, str]]]:
+    """HF データセットからドメイン別プロンプトプールを組み立てる。
+
+    シードは `SEED_SPLIT`（train）だけから取る。train が無いデータセットは他の split に
+    流さずエラーにする（評価用 split の混入を防ぐ）。`keep` で行を絞り、`sample` 指定が
+    あれば `SAMPLE_SEED` で非復元に間引く。
+
+    Args:
+        domains: 読み込むドメイン。None なら全ドメイン。
 
     Returns:
-        domain -> prompt list。空文字・短すぎるものは除外する。
+        domain -> [(prompt, "<dataset>/<split>")]。20 文字未満のプロンプトは除外する。
 
     Raises:
-        RuntimeError: どのドメインもプールが空の場合（黙って skip しない）。
+        RuntimeError: 対象ドメインのプールが空の場合（黙って skip しない）。
+        ValueError: データセットに train split が無い、またはプロンプト列が無い場合。
         ImportError: `datasets` が未インストールの場合。
     """
     from datasets import load_dataset  # noqa: PLC0415
 
-    pool: dict[str, list[str]] = defaultdict(list)
-    for name, config, field, domain in SEED_SOURCES:
+    sources = [src for src in SEED_SOURCES if domains is None or src["domain"] in domains]
+    pool: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for src in sources:
+        name, field = src["dataset"], src["field"]
         try:
-            ds_dict = load_dataset(name, config)
-            keys = list(ds_dict.keys())
-            if not keys:
-                print(f"[seed skip] {name}: no split")
-                continue
-            split = "train" if "train" in keys else keys[0]
-            ds = ds_dict[split]
-        except Exception as exc:  # キャッシュ欠落・config 名違い
-            print(f"[seed skip] {name}: {exc}")
-            continue
-        columns = set(ds.column_names)
-        key = field if field in columns else next((f for f in FIELD_FALLBACKS if f in columns), None)
-        if key is None:
-            print(f"[seed skip] {name}: no prompt column in {sorted(columns)}")
-            continue
-        for row in ds:
-            text = str(row.get(key, "")).strip()
+            ds = load_dataset(name, src.get("config"), split=SEED_SPLIT)
+        except ValueError as exc:  # 指定 split が無い
+            raise ValueError(f"{name}: no {SEED_SPLIT} split") from exc
+        if isinstance(field, str) and field not in ds.column_names:
+            raise ValueError(f"{name}: no column {field!r} in {sorted(ds.column_names)}")
+        if src.get("keep"):
+            ds = ds.filter(src["keep"])
+        indices = list(range(len(ds)))
+        if src.get("sample") and src["sample"] < len(indices):
+            indices = sorted(random.Random(SAMPLE_SEED).sample(indices, src["sample"]))
+        for row in ds.select(indices):
+            text = (field(row) if callable(field) else str(row.get(field) or "")).strip()
             if len(text) >= 20:
-                pool[domain].append((text, f"{name}/{split}"))
+                pool[src["domain"]].append((text, f"{name}/{SEED_SPLIT}"))
+        print(f"[seed source] {name}: {len(indices)} rows", flush=True)
 
-    empty = [d for d in sorted({d for _, _, _, d in SEED_SOURCES}) if not pool.get(d)]
+    empty = sorted({src["domain"] for src in sources} - {d for d in pool if pool[d]})
     if empty:
         raise RuntimeError(f"seed pool is empty for: {', '.join(empty)}")
     for domain in sorted(pool):
-        print(f"[seed pool] {domain}: {len(pool[domain])}")
+        print(f"[seed pool] {domain}: {len(pool[domain])}", flush=True)
     return pool
 
 
@@ -238,7 +291,10 @@ def sample_prefix(domain: str, mode: str, rng: random.Random, prompt: str = "") 
     if mode == "reasoning":
         return rng.choice(REASONING_PREFIX_POOLS[domain])
     pool = PREFIX_POOLS[domain]
-    want_ja = domain == "japanese" or is_japanese_text(prompt)
+    # 漢字を 1 字含むだけで日本語扱いにすると、中国語の書名などを引用した英語プロンプトに
+    # 日本語 prefix が付き、応答が日本語になって language_mixed で落ちる。filters と同じ
+    # 支配的な文字種の判定を使い、prefix の言語を language_mixed の期待言語とそろえる
+    want_ja = domain == "japanese" or filters.detect_language(prompt) == "ja"
     matched = [p for p in pool if is_japanese_text(p) == want_ja]
     return rng.choice(matched or pool)
 
