@@ -208,7 +208,7 @@ def generate_one(
 def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Counter, int]:
     """既存出力から resume 用の状態を復元する。
 
-    済みキーに加え、(domain, mode) 別の通過数を数え直し、全レコードを出力順に
+    済みキー（domain|seed_index。mode は問わない）に加え、(domain, mode) 別の通過数を数え直し、全レコードを出力順に
     deduper へ流して重複判定の index を再構築する。中断で末尾が書きかけの行は切り捨てる
     （次の追記が壊れた行に連結されるのを防ぐ）。
 
@@ -240,7 +240,7 @@ def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Count
             continue
         total += 1
         domain, mode = rec.get("domain"), rec.get("mode")
-        seen.add(f"{domain}|{mode}|{rec.get('seed_index')}")
+        seen.add(f"{domain}|{rec.get('seed_index')}")
         deduper.is_duplicate(domain, rec.get("prompt", ""), rec.get("response", ""))
         if rec.get("passed") and not rec.get("duplicate"):
             kept[(domain, mode)] += 1
@@ -323,11 +323,16 @@ def run(args: argparse.Namespace) -> dict:
                 while kept_dm[(domain, mode)] < count and generated < cap:
                     batch = min(args.concurrency, cap - generated)
                     candidates = []
-                    for _ in range(batch):
+                    # 1 シードは mode をまたいで 1 回だけ使う。済みのシードは飛ばして引き直し、
+                    # プールを一巡しても埋まらなければ（シード切れ）そこで打ち切る。
+                    # resume 直後は先頭の済みシードが続くため、1 バッチ分の空振りで止めない
+                    draws = 0
+                    while len(candidates) < batch and draws < sampler.size(domain):
                         prompt, seed_index, seed_source = sampler.sample(domain)
+                        draws += 1
                         if domain == "japanese" and not seeds.is_japanese_text(prompt):
                             prompt += JAPANESE_USER_SUFFIX
-                        key = f"{domain}|{mode}|{seed_index}"
+                        key = f"{domain}|{seed_index}"
                         if key in seen:
                             continue
                         seen.add(key)
