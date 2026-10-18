@@ -205,7 +205,7 @@ def generate_one(
     }
 
 
-def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Counter, int]:
+def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Counter, int, Counter]:
     """既存出力から resume 用の状態を復元する。
 
     済みキー（domain|seed_index。mode は問わない）に加え、(domain, mode) 別の通過数を数え直し、全レコードを出力順に
@@ -217,12 +217,14 @@ def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Count
         deduper: 状態を復元する重複除去器。
 
     Returns:
-        (済みキーの set, (domain, mode) 別通過数, 既存レコード数)。
+        (済みキーの set, (domain, mode) 別通過数, 既存レコード数,
+        (domain, mode, effort) 別生成数)。
     """
     seen: set[str] = set()
     kept: Counter = Counter()
+    gen: Counter = Counter()
     if not path.exists():
-        return seen, kept, 0
+        return seen, kept, 0, gen
     raw = path.read_bytes()
     if raw and not raw.endswith(b"\n"):
         cut = raw.rfind(b"\n") + 1
@@ -241,10 +243,11 @@ def load_state(path: Path, deduper: dedup.Deduplicator) -> tuple[set[str], Count
         total += 1
         domain, mode = rec.get("domain"), rec.get("mode")
         seen.add(f"{domain}|{rec.get('seed_index')}")
+        gen[(domain, mode, rec.get("reasoning_effort", ""))] += 1
         deduper.is_duplicate(domain, rec.get("prompt", ""), rec.get("response", ""))
         if rec.get("passed") and not rec.get("duplicate"):
             kept[(domain, mode)] += 1
-    return seen, kept, total
+    return seen, kept, total, gen
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -265,6 +268,10 @@ def run(args: argparse.Namespace) -> dict:
     tokenizer = AutoTokenizer.from_pretrained(args.model, local_files_only=True)
 
     domains = sorted(pool)
+    # --mode-mix: 例 none=0.25,low=0.20,medium=0.35,high=0.20（none は no_reasoning）
+    mix = [(k, float(v)) for k, v in (x.split("=") for x in filter(None, args.mode_mix.split(",")))]
+    if mix and abs(sum(w for _, w in mix) - 1.0) > 1e-6:
+        raise ValueError("--mode-mix の比率の合計は 1 にする")
     if not domains:
         return {"total": 0, "kept": 0, "reasons": {}, "by_domain_mode": {}}
 
@@ -296,7 +303,7 @@ def run(args: argparse.Namespace) -> dict:
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     deduper = dedup.Deduplicator(threshold=args.dedup_threshold)
-    seen, kept_dm, resumed = load_state(out_path, deduper)
+    seen, kept_dm, resumed, gen_dme = load_state(out_path, deduper)
 
     stats: Counter = Counter()
     reason_counter: Counter = Counter()
@@ -313,14 +320,28 @@ def run(args: argparse.Namespace) -> dict:
 
     with out_path.open("a", encoding="utf-8") as fh:
         for domain in domains:
-            half = quota[domain] // 2
-            tasks = [(domain, "reasoning", half), (domain, "no_reasoning", quota[domain] - half)]
-            for domain, mode, count in tasks:
+            if mix:
+                # シード全件を mix の比率で (mode, effort) に割り振り、各シードを 1 回ずつ生成する。
+                # count は通過数ではなく生成数の目標（resume 時は既存の生成数から再開）
+                size = min(sampler.size(domain), args.max_seeds) if args.max_seeds else sampler.size(domain)
+                tasks = [
+                    (domain, "no_reasoning" if e == "none" else "reasoning", round(size * w), "" if e == "none" else e)
+                    for e, w in mix
+                ]
+            else:
+                half = quota[domain] // 2
+                tasks = [(domain, "reasoning", half, None), (domain, "no_reasoning", quota[domain] - half, None)]
+            for domain, mode, count, fixed_effort in tasks:
                 if count <= 0:
                     continue
-                generated = 0
-                cap = sampler.size(domain) * args.max_reuse
-                while kept_dm[(domain, mode)] < count and generated < cap:
+                generated = gen_dme[(domain, mode, fixed_effort)] if mix else 0
+                cap = count if mix else sampler.size(domain) * args.max_reuse
+
+                def remaining() -> bool:
+                    """task を続けるかを返す（mix は生成数、通常は通過数で判定）。"""
+                    return generated < cap if mix else (kept_dm[(domain, mode)] < count and generated < cap)
+
+                while remaining():
                     batch = min(args.concurrency, cap - generated)
                     candidates = []
                     # 1 シードは mode をまたいで 1 回だけ使う。済みのシードは飛ばして引き直し、
@@ -336,7 +357,10 @@ def run(args: argparse.Namespace) -> dict:
                         if key in seen:
                             continue
                         seen.add(key)
-                        effort = seeds.sample_effort(rng) if mode == "reasoning" else ""
+                        if fixed_effort is not None:
+                            effort = fixed_effort
+                        else:
+                            effort = seeds.sample_effort(rng) if mode == "reasoning" else ""
                         candidates.append(
                             (prompt, seed_index, seed_source, effort, seeds.sample_prefix(domain, mode, rng, prompt))
                         )
@@ -433,6 +457,12 @@ def main() -> None:
     """CLI エントリポイント。"""
     parser = argparse.ArgumentParser(description="gpt-oss-20b 自己蒸留データ生成")
     parser.add_argument("--target-kept", type=int, default=1000, help="通過数の目標")
+    parser.add_argument("--max-seeds", type=int, default=0, help="--mode-mix で使うシード数の上限（パイロット用。0 は全件）")
+    parser.add_argument(
+        "--mode-mix",
+        default="",
+        help="シード全件を (mode, effort) に比率で割り振る（例: none=0.25,low=0.2,medium=0.35,high=0.2）",
+    )
     parser.add_argument(
         "--domain-quota", default="", help="ドメイン別の通過数（例: code=50000,english=25500）。自動配分を上書き"
     )

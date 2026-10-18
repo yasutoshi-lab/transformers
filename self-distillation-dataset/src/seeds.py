@@ -3,8 +3,8 @@
 シードは ws1-arc の HuggingFace キャッシュから読む（未取得なら初回にダウンロードする）。
 プールが尽きる規模では、ドメイン別の quota はプールサイズで上限をかける。
 
-ドメインは Curator の指定に沿って 6 系統:
-general_knowledge / code / math / japanese / english / dialogue
+ドメインは Curator の指定に沿って 7 系統:
+general_knowledge / code / math / japanese / english / cybersecurity / dialogue
 
 設計判断（2026-10-10 のレビューに基づく）:
 
@@ -71,6 +71,11 @@ SEED_SOURCES: list[dict] = [
         "keep": lambda row: row["source"] in {"socratic", "stackexchange"},
         "sample": 62_000,
     },
+    {
+        "dataset": "Trendyol/Trendyol-Cybersecurity-Instruction-Tuning-Dataset",
+        "field": "user",
+        "domain": "cybersecurity",
+    },
     {"dataset": "yongtae-jp/orca_dpo_pairs_ja", "field": "prompt", "domain": "dialogue"},
 ]
 
@@ -111,6 +116,12 @@ PREFIX_POOLS: dict[str, list[str]] = {
         "Good question",
         "Let me break this down",
     ],
+    "cybersecurity": [
+        "Here is a structured answer",
+        "Short answer first",
+        "From a defensive standpoint",
+        "Let me break this down",
+    ],
     "dialogue": [
         "承知しました",
         "なるほど",
@@ -146,6 +157,11 @@ REASONING_PREFIX_POOLS: dict[str, list[str]] = {
         "Let me restate what the user wants",
         "First, figure out what kind of answer fits here",
         "The user is asking for",
+    ],
+    "cybersecurity": [
+        "Let me restate the security question",
+        "First, identify the threat model and the defender's goal",
+        "The user is asking about",
     ],
     "dialogue": [
         "Let me restate the context",
@@ -183,6 +199,7 @@ def load_seed_pool(domains: set[str] | None = None) -> dict[str, list[tuple[str,
 
     sources = [src for src in SEED_SOURCES if domains is None or src["domain"] in domains]
     pool: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    seen_text: dict[str, set[str]] = defaultdict(set)
     for src in sources:
         name, field = src["dataset"], src["field"]
         try:
@@ -198,7 +215,9 @@ def load_seed_pool(domains: set[str] | None = None) -> dict[str, list[tuple[str,
             indices = sorted(random.Random(SAMPLE_SEED).sample(indices, src["sample"]))
         for row in ds.select(indices):
             text = (field(row) if callable(field) else str(row.get(field) or "")).strip()
-            if len(text) >= 20:
+            # 同じプロンプトはドメイン内で 1 回だけ使う（oasst 系は最初の発話が枝分かれで重複する）
+            if len(text) >= 20 and text not in seen_text[src["domain"]]:
+                seen_text[src["domain"]].add(text)
                 pool[src["domain"]].append((text, f"{name}/{SEED_SPLIT}"))
         print(f"[seed source] {name}: {len(indices)} rows", flush=True)
 
