@@ -67,6 +67,8 @@ training:
 
   seed: 42
   data_seed: 42
-  dataloader_num_workers: 2
+  # 0: DataLoader のワーカーを fork すると、cudaHostRegister でピン留めしたモーメント（3B で 26GB）が
+  # ワーカーごとに複製される（ピン留めしたページは fork 時に共有されずコピーされる）
+  dataloader_num_workers: 0
 
 final_dir: artifacts-cmp/models/llama-3.2-3b-sft-comparison
