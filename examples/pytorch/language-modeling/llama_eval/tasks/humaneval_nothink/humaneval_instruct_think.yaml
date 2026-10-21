@@ -1,0 +1,16 @@
+include: humaneval.yaml
+task: humaneval_instruct_think
+# humaneval_instruct の問題文のまま、前置きを入れずに assistant が <think> から書き始める形（学習時の思考ありと同じ）
+doc_to_text: "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{{ prompt }}\n```\n"
+generation_kwargs:
+  until:
+    - "<|eot_id|>"
+  max_gen_toks: 2048
+  do_sample: false
+filter_list:
+  - name: "create_test"
+    filter:
+      - function: "custom"
+        filter_fn: !function utils.build_predictions_think
+metadata:
+  version: 4.0

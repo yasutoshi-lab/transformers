@@ -8,6 +8,7 @@
 #   - AdamW の状態を CPU に置く（run_llama_reasoning_sft.py の HostOffloadAdamW。計算は同じ）
 #   - Liger の fused linear cross entropy でロジットを展開しない
 #   - 有効バッチ 64 会話 = 1 × 64（勾配累積）
+# epoch 数は 1（Ranunculus は 2）。2026-10-18 に Curator の指示で変更
 # 忘却の監視（事前学習の検証 loss）は、Llama の事前学習データがないため入れない
 # =============================================================================
 
@@ -33,7 +34,7 @@ training:
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   gradient_accumulation_steps: 64
-  num_train_epochs: 2
+  num_train_epochs: 1
   train_sampling_strategy: random
 
   learning_rate: 2.0e-5

@@ -1,0 +1,12 @@
+include: humaneval.yaml
+task: humaneval_instruct_nothink
+# humaneval_instruct と同じ。前置きの前に、学習時の思考なしの形式（空の思考ブロック）を置く
+doc_to_text: "Write a solution to the following problem and make sure that it passes the tests:\n```python\n{{ prompt }}\n```\n"
+gen_prefix: "<think>\n\n</think>\n\nHere is the completed function:\n```python\n{{ prompt }}\n"
+filter_list:
+  - name: "create_test"
+    filter:
+      - function: "custom"
+        filter_fn: !function utils.build_predictions_instruct
+metadata:
+  version: 4.0
