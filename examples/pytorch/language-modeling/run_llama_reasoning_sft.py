@@ -100,8 +100,78 @@ class HostOffloadAdamW(torch.optim.Optimizer):
             hp.copy_(p.detach().cpu())
 
 
+class MomentOffloadAdamW(torch.optim.Optimizer):
+    """AdamW that keeps only the moments in pinned CPU memory and updates the fp32 weights on the GPU.
+
+    For hosts whose RAM cannot hold an fp32 master copy as well (Llama-3.2-3B: moments 26GB vs. 51GB
+    for ``HostOffloadAdamW``). Each step streams a parameter's ``exp_avg`` / ``exp_avg_sq`` to the GPU,
+    applies the ``torch.optim.AdamW`` update (decoupled weight decay, bias correction) and copies the
+    moments back.
+
+    Args:
+        param_groups: Parameter groups of GPU fp32 parameters (with per-group ``weight_decay``).
+        lr: Learning rate.
+        betas: Adam betas.
+        eps: Adam epsilon.
+    """
+
+    def __init__(self, param_groups, lr: float, betas: tuple[float, float], eps: float):
+        super().__init__(param_groups, {"lr": lr, "betas": betas, "eps": eps, "weight_decay": 0.0})
+        for g in self.param_groups:
+            for p in g["params"]:
+                self._init_state(p)
+
+    def _init_state(self, p) -> None:
+        st = self.state[p]
+        st["step"] = torch.zeros((), dtype=torch.float32)
+        st["exp_avg"] = torch.zeros(p.shape, dtype=torch.float32, device="cpu").pin_memory()
+        st["exp_avg_sq"] = torch.zeros(p.shape, dtype=torch.float32, device="cpu").pin_memory()
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        for g in self.param_groups:
+            lr, (b1, b2), eps, wd = g["lr"], g["betas"], g["eps"], g["weight_decay"]
+            for p in g["params"]:
+                if p.grad is None:
+                    continue
+                st = self.state[p]
+                st["step"] += 1
+                t = float(st["step"])
+                m = st["exp_avg"].to(p.device, non_blocking=True)
+                v = st["exp_avg_sq"].to(p.device, non_blocking=True)
+                grad = p.grad
+                p.mul_(1 - lr * wd)
+                m.lerp_(grad, 1 - b1)
+                v.mul_(b2).addcmul_(grad, grad, value=1 - b2)
+                bc1, bc2 = 1 - b1**t, 1 - b2**t
+                denom = (v.sqrt() / bc2**0.5).add_(eps)
+                p.addcdiv_(m, denom, value=-lr / bc1)
+                st["exp_avg"].copy_(m, non_blocking=True)
+                st["exp_avg_sq"].copy_(v, non_blocking=True)
+        torch.cuda.synchronize()
+
+    @torch.no_grad()
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        # The base class moves the moments to the parameter's device; put them back in pinned host memory.
+        for g in self.param_groups:
+            for p in g["params"]:
+                st = self.state[p]
+                for k in ("exp_avg", "exp_avg_sq"):
+                    st[k] = st[k].to("cpu").pin_memory()
+                st["step"] = st["step"].to("cpu")
+
+
+OPTIMIZERS = {"host_offload": HostOffloadAdamW, "moment_offload": MomentOffloadAdamW}
+
+
 class OffloadTrainer(RanunculusTrainer):
-    """RanunculusTrainer with the AdamW state offloaded to the host."""
+    """RanunculusTrainer with the AdamW state offloaded to the host.
+
+    ``optimizer_cls`` picks the offload scheme (``HostOffloadAdamW`` unless the config says otherwise).
+    """
+
+    optimizer_cls = HostOffloadAdamW
 
     def create_optimizer(self):
         if self.optimizer is not None:
@@ -116,7 +186,7 @@ class OffloadTrainer(RanunculusTrainer):
             else:
                 decay.append(param)
         args = self.args
-        self.optimizer = HostOffloadAdamW(
+        self.optimizer = self.optimizer_cls(
             [{"params": decay, "weight_decay": args.weight_decay}, {"params": no_decay, "weight_decay": 0.0}],
             lr=args.learning_rate,
             betas=(args.adam_beta1, args.adam_beta2),
@@ -165,6 +235,7 @@ def main() -> None:
     cli_args = parser.parse_args()
 
     cfg = load_yaml(cli_args.config)
+    OffloadTrainer.optimizer_cls = OPTIMIZERS[cfg.get("optimizer", "host_offload")]
     tokenizer = AutoTokenizer.from_pretrained(cfg["tokenizer_dir"])
     tokenizer.chat_template = Path(cfg["chat_template"]).read_text()
     tokenizer.pad_token = cfg["pad_token"]
