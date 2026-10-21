@@ -121,11 +121,24 @@ class MomentOffloadAdamW(torch.optim.Optimizer):
             for p in g["params"]:
                 self._init_state(p)
 
+    @staticmethod
+    def _pin(t: torch.Tensor) -> torch.Tensor:
+        """Page-lock ``t`` in place with ``cudaHostRegister``.
+
+        ``Tensor.pin_memory()`` goes through the caching host allocator, which rounds every block up
+        to a power of two (3B: 26GB of moments took 36GB of pinned memory). Registering the existing
+        pages pins exactly the tensor's size.
+        """
+        t = t.contiguous()
+        err = torch.cuda.cudart().cudaHostRegister(t.data_ptr(), t.numel() * t.element_size(), 0)
+        assert int(err) == 0, f"cudaHostRegister failed: {err}"
+        return t
+
     def _init_state(self, p) -> None:
         st = self.state[p]
         st["step"] = torch.zeros((), dtype=torch.float32)
-        st["exp_avg"] = torch.zeros(p.shape, dtype=torch.float32, device="cpu").pin_memory()
-        st["exp_avg_sq"] = torch.zeros(p.shape, dtype=torch.float32, device="cpu").pin_memory()
+        st["exp_avg"] = self._pin(torch.zeros(p.shape, dtype=torch.float32, device="cpu"))
+        st["exp_avg_sq"] = self._pin(torch.zeros(p.shape, dtype=torch.float32, device="cpu"))
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -152,14 +165,16 @@ class MomentOffloadAdamW(torch.optim.Optimizer):
 
     @torch.no_grad()
     def load_state_dict(self, state_dict):
-        super().load_state_dict(state_dict)
-        # The base class moves the moments to the parameter's device; put them back in pinned host memory.
-        for g in self.param_groups:
-            for p in g["params"]:
-                st = self.state[p]
-                for k in ("exp_avg", "exp_avg_sq"):
-                    st[k] = st[k].to("cpu").pin_memory()
-                st["step"] = st["step"].to("cpu")
+        # Copy into the registered host buffers instead of calling the base class, which would move
+        # the moments to the GPU (26GB for 3B) and replace the pinned tensors.
+        params = [p for g in self.param_groups for p in g["params"]]
+        for g, saved in zip(self.param_groups, state_dict["param_groups"]):
+            g.update({k: v for k, v in saved.items() if k != "params"})
+        for i, p in enumerate(params):
+            saved, st = state_dict["state"][i], self.state[p]
+            st["step"] = saved["step"].detach().to("cpu", torch.float32).clone()
+            for k in ("exp_avg", "exp_avg_sq"):
+                st[k].copy_(saved[k])
 
 
 OPTIMIZERS = {"host_offload": HostOffloadAdamW, "moment_offload": MomentOffloadAdamW}
