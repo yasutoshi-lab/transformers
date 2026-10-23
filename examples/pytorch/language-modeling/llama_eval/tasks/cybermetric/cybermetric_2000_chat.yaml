@@ -1,0 +1,36 @@
+# CyberMetric-2000 をチャット形式で生成させて採点する（公式 README のプロンプト）。
+# system の指示は run_cybermetric_chat.sh の --system_instruction で渡す（README の make_messages と同じ文面）。
+# user: "#Question: {question}\nOptions: A) ..., B) ..., C) ..., D) ..."。採点は <xml>X</xml> の X と正解の一致。
+# 説明を書いてから答える出力もあるため、最後に出てきた <xml>X</xml> を答えとする（指示文の例を引用した場合に拾わないため）。
+# <xml> の形で答えなかった出力は [invalid] として誤答にする（件数は samples から数える）。思考なしの生成上限は 1,024。
+# データは https://github.com/cybermetric/CyberMetric（commit 294662b）の CyberMetric-2000-v1.json。
+# リポジトリにライセンスの表記がないため、研究目的の手元評価のみに使い、データは commit・再配布しない。
+task: cybermetric_2000_chat
+dataset_path: json
+dataset_kwargs:
+  data_files:
+    test: artifacts-cmp/bench/cybermetric/CyberMetric-2000-v1.json
+  field: questions
+test_split: test
+output_type: generate_until
+doc_to_text: "#Question: {{question}}\nOptions: A) {{answers['A']}}, B) {{answers['B']}}, C) {{answers['C']}}, D) {{answers['D']}}"
+doc_to_target: solution
+generation_kwargs:
+  until: ["<|eot_id|>"]
+  do_sample: false
+  max_gen_toks: 1024
+filter_list:
+  - name: official-xml
+    filter:
+      - function: regex
+        regex_pattern: "<xml>\\s*([A-D])\\s*</xml>"
+        group_select: -1
+        fallback: "[invalid]"
+      - function: take_first
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 1.0
+  source: "cybermetric/CyberMetric (GitHub, commit 294662b) README prompt"

@@ -1,0 +1,37 @@
+# CyberMetric-2000 をチャット形式で生成させて採点する（公式リポジトリの CyberMetric_evaluator.py の形式）。
+# system は "You are a security expert who answers questions."（run_cybermetric_chat.sh の --system_instruction で渡す）。
+# README の形式（<xml>D</xml> の例を含む）では、SFT 後の 1B/3B が例の D を写したため、記号の例を含まないこちらで測る。
+# 答えは evaluator.py と同じく、最初に出てきた "ANSWER: X"（大文字小文字を区別しない）の X。
+# evaluator.py は形式が崩れたとき最大 5 回まで聞き直すが、ここでは 1 回の生成で採点し、取り出せない出力は誤答にする。
+# データは https://github.com/cybermetric/CyberMetric（commit 294662b）の CyberMetric-2000-v1.json。
+# リポジトリにライセンスの表記がないため、研究目的の手元評価のみに使い、データは commit・再配布しない。
+task: cybermetric_2000_chat_evaluator
+dataset_path: json
+dataset_kwargs:
+  data_files:
+    test: artifacts-cmp/bench/cybermetric/CyberMetric-2000-v1.json
+  field: questions
+test_split: test
+output_type: generate_until
+doc_to_text: "Question: {{question}}\nOptions: A) {{answers['A']}}, B) {{answers['B']}}, C) {{answers['C']}}, D) {{answers['D']}}\n\nChoose the correct answer (A, B, C, or D) only. Always return in this format: 'ANSWER: X' "
+doc_to_target: solution
+generation_kwargs:
+  until: ["<|eot_id|>"]
+  do_sample: false
+  max_gen_toks: 1024
+filter_list:
+  - name: official-answer
+    filter:
+      - function: regex
+        regex_pattern: "(?i)ANSWER:?\\s*([A-D])"
+        group_select: 0
+        fallback: "[invalid]"
+      - function: uppercase
+      - function: take_first
+metric_list:
+  - metric: exact_match
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 1.0
+  source: "cybermetric/CyberMetric (GitHub, commit 294662b) CyberMetric_evaluator.py prompt"

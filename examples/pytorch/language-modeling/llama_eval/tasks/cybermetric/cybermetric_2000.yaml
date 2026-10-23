@@ -1,0 +1,26 @@
+# CyberMetric-2000（4 択、2,000 問）。MMLU と同じ形式・同じ採点（選択肢の記号 A〜D の対数尤度）で 5-shot。
+# 分割がないため、few-shot の例は同じ問題集から取る（lm-eval は評価中の問題を例から除く）。
+# データは https://github.com/cybermetric/CyberMetric（commit 294662b）の CyberMetric-2000-v1.json。
+# リポジトリにライセンスの表記がないため、研究目的の手元評価のみに使い、データは commit・再配布しない。
+task: cybermetric_2000
+dataset_path: json
+dataset_kwargs:
+  data_files:
+    test: artifacts-cmp/bench/cybermetric/CyberMetric-2000-v1.json
+  field: questions
+test_split: test
+fewshot_split: test
+num_fewshot: 5
+output_type: multiple_choice
+doc_to_text: "{{question.strip()}}\nA. {{answers['A']}}\nB. {{answers['B']}}\nC. {{answers['C']}}\nD. {{answers['D']}}\nAnswer:"
+doc_to_choice: ["A", "B", "C", "D"]
+doc_to_target: "{{['A', 'B', 'C', 'D'].index(solution)}}"
+fewshot_config:
+  sampler: first_n
+metric_list:
+  - metric: acc
+    aggregation: mean
+    higher_is_better: true
+metadata:
+  version: 1.0
+  source: "cybermetric/CyberMetric (GitHub, commit 294662b)"
