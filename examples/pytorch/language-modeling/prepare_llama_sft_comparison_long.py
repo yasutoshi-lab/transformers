@@ -7,7 +7,8 @@ SFT runs differ only in the length of the thinking:
 * no_reasoning conversations: copied unchanged (same rows, same splits) from the short-thinking
   dataset written by ``prepare_llama_sft_comparison.py`` (``--short_dir``);
 * reasoning conversations: every ``high`` row plus ``medium`` rows sampled to reach exactly the
-  short dataset's count per domain and split. english uses all ``medium`` and all ``high``.
+  short dataset's count per domain and split. english uses all ``medium`` and all ``high``; when a
+  duplicate leaves english short, the train split is shorter by that many conversations.
 
 Held-out splits keep the short dataset's reasoning counts; english splits them evenly between
 medium and high, the other domains in proportion to the medium/high counts. A row is dropped when
@@ -117,7 +118,10 @@ def main() -> None:
         # high first (all of it), then medium up to the short dataset's count.
         picked = {"high": take(d, "high", need)}
         picked["medium"] = take(d, "medium", need - len(picked["high"]))
-        assert sum(len(v) for v in picked.values()) == need, (d, need, {k: len(v) for k, v in picked.items()})
+        # english has no spare rows (all medium and all high are used); a duplicate there shortens train.
+        short_by = need - sum(len(v) for v in picked.values())
+        assert short_by == 0 or d == "english", (d, need, {k: len(v) for k, v in picked.items()})
+        stats[f"{d}/reasoning/short_of_target"] = short_by
         sizes = {e: len(v) for e, v in picked.items() if v}
         start = Counter()
         for split in HELD_OUT:
@@ -136,7 +140,7 @@ def main() -> None:
             stats[f"{split}/{ex['mode']}/tokens"] += len(ex["input_ids"])
             stats[f"{split}/{ex['mode']}/loss_tokens"] += sum(x != -100 for x in ex["labels"])
         stats[f"{split}/total"] = len(r)
-        assert len(r) == len(short[split]), (split, len(r), len(short[split]))
+        assert len(r) == len(short[split]) - (stats["english/reasoning/short_of_target"] if split == "train" else 0), split
     keys = [{(e["seed_source"], e["seed_index"]) for e in r} for r in rows.values()]
     assert not (keys[0] & keys[1] or keys[0] & keys[2] or keys[1] & keys[2]), "seed overlap between splits"
 
