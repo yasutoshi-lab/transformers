@@ -1,0 +1,74 @@
+# Llama-3.2-1B SFT（1B/3B 比較。gpt-oss-20b の長い思考〔high＋medium〕で学習。短い思考〔low〕版 llama-3.2-1b-sft-comparison.yaml の対照実験。思考切り替え式・空の think を loss から除外・loss は最後の assistant 発話のみ。全パラメータ、fp32 master weights + bf16 autocast）
+# =============================================================================
+# 初期値: meta-llama/Llama-3.2-1B（事前学習モデル。Instruct ではない）
+# データ: yasutoshi-lab/gpt-oss-20b-self-distillation から prepare_llama_sft_comparison_long.py で作成
+#         （yasutoshi-lab/Llama-3.2-SFT-Comparison-long。思考なしは low 版と同一、思考ありは high 全件 + medium〔件数は low 版とそろえる〕。train/validation/test = 8.5/1/0.5）
+# 根拠: Li ほか「Small Models Struggle to Learn from Strong Reasoners」（arXiv 2502.12143）
+# chat template: llama-3.2-1b-it-1021 と同じ（chat_templates/llama3_reasoning_toggle.jinja）
+# ハイパーパラメータ・seed は 1B と 3B で共通（llama-3.2-1b-reasoning-sft と同じ）。ws1-arc（RTX A6000 48GB）で実行
+#   - AdamW のモーメントだけを CPU に置き、更新は GPU で行う（MomentOffloadAdamW。計算は torch の AdamW と同じ）
+#     3B は AdamW の状態まで GPU に置くと約 51GB で入らず、fp32 の master コピーも CPU に置く方式は RAM が足りないため
+#   - Liger の fused linear cross entropy でロジットを展開しない
+#   - 有効バッチ 64 会話 = 1 × 64（勾配累積）、1 epoch
+# =============================================================================
+
+init_from: meta-llama/Llama-3.2-1B
+tokenizer_dir: artifacts-cmp/tokenizer
+chat_template: chat_templates/llama3_reasoning_toggle.jinja
+pad_token: <|finetune_right_pad_id|>
+# 事前学習で未学習の区切りトークン（埋め込みのノルムが予約トークンと同じ 0.545）
+reset_tokens: ["<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"]
+n_regular_vocab: 128000
+attn_implementation: sdpa
+optimizer: moment_offload
+gradient_checkpointing: true
+
+data:
+  train: artifacts-cmp/sft-data-long/train
+  val: artifacts-cmp/sft-data-long/validation
+  drop_columns: [domain, reasoning_effort]
+
+training:
+  output_dir: artifacts-cmp/checkpoints/llama-3.2-1b-sft-comparison-long
+
+  # 有効バッチ 64 会話 = 1 × 64
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 64
+  num_train_epochs: 1
+  train_sampling_strategy: random
+
+  learning_rate: 2.0e-5
+  lr_scheduler_type: cosine_with_min_lr
+  lr_scheduler_kwargs:
+    min_lr_rate: 0.1
+  warmup_ratio: 0.03
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-8
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  bf16: true
+  use_liger_kernel: true
+
+  eval_strategy: steps
+  eval_steps: 100
+  save_strategy: steps
+  save_steps: 100
+  save_total_limit: 2
+
+  logging_strategy: steps
+  logging_steps: 5
+  report_to: none
+  run_name: llama-3.2-1b-sft-comparison-long
+  remove_unused_columns: false
+  prediction_loss_only: true
+
+  seed: 42
+  data_seed: 42
+  # 0: DataLoader のワーカーを fork すると、cudaHostRegister でピン留めしたモーメント（3B で 26GB）が
+  # ワーカーごとに複製される（ピン留めしたページは fork 時に共有されずコピーされる）
+  dataloader_num_workers: 0
+
+final_dir: artifacts-cmp/models/llama-3.2-1b-sft-comparison-long
