@@ -45,7 +45,7 @@ BENCH = [
 # (label, run dir for thinking off, run dir for thinking on, task prefix, generation cap off/on)
 CHAT = [
     ("GSM8K（5-shot multiturn、flexible）", "gsm8k-chat-nothink", "gsm8k-chat-think", "gsm8k", (2048, 4096)),
-    ("HumanEval（pass@1）", "humaneval-chat-nothink", "humaneval-chat-think", "humaneval_instruct", (1024, 2048)),
+    ("HumanEval（pass@1）", "humaneval-chat-nothink", "humaneval-chat-think", "humaneval_instruct", (1024, 4096)),
 ]
 
 
