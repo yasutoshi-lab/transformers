@@ -1,0 +1,31 @@
+# freesia-300m-sup (v3): stage 4 without NLI (retrieval + classification), lr 1e-5, focal 0, 1 epoch.
+# From the stage 3 v2 model. Chosen after the 300-step ablation (abl4-*), Curator decision 2026-11-09.
+init_from: artifacts/runs/freesia-300m-weak/final
+tokenizer: artifacts/tokenizer-v2/v32k
+output_dir: artifacts/runs/freesia-300m-sup-v3
+init_embed_mode_from: null     # keep the embed mode trained in stage 3
+bloom_override: closed
+pooling_mode: mean
+ja_sources: []
+en_sources: []
+supcl_dir: ~/freesia-work/sup-cl/hf   # same files as the HF upload (private)
+supcl_tasks: [retrieval, classification]   # v3: NLI dropped (ablation B collapsed STS)
+batch_queries: 512
+k_neg: 7
+max_query_len: 128
+max_doc_len: 256
+chunk: 256
+temperature: 0.05
+false_neg_margin: 0.1
+focal_gamma: 0.0
+lr: 1.0e-5
+warmup_ratio: 0.05
+weight_decay: 0.01
+epochs: 1
+seed: 42
+log_every: 10
+save_minutes: 30
+gradient_checkpointing: true
+max_chars: 1200
+max_neg_pool: 12
+min_available_gb: 8.0

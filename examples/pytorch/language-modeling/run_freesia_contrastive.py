@@ -54,6 +54,7 @@ INSTRUCTIONS = {
     "retrieval_en": "Given a question, retrieve passages that answer the question",
     "nli_ja": "意味が似ている文を検索する",
     "nli_en": "Retrieve semantically similar text",
+    "classification_ja": "与えられた文章のトピックを分類する",
     "classification_en": "Classify the given text",
     "clustering_en": "Identify the topic or theme of the given text",
 }
@@ -170,7 +171,7 @@ def load_sources(cfg: dict, rng: random.Random) -> list[dict]:
             for s in group:
                 keep = max(1, int(len(s["rows"]) * budget / total))
                 s["rows"] = rng.sample(s["rows"], min(keep, len(s["rows"])))
-    sources += load_weak_sources(cfg, rng)
+    sources += load_supcl(cfg) if cfg.get("supcl_dir") else load_weak_sources(cfg, rng)
     sources = [s for s in sources if len(s["rows"]) >= cfg["batch_queries"]]
     for s in sources:
         print(f"source {s['name']:<40} kind={s['kind']:<14} rows={len(s['rows']):,}", flush=True)
@@ -194,6 +195,8 @@ def load_weak_sources(cfg: dict, rng: random.Random) -> list[dict]:
     Returns:
         list[dict]: Sources with `name`, `kind`, `lang`, `inbatch`, `rows` (negatives are empty lists).
     """
+    if cfg.get("weakcl_dir"):
+        return load_weakcl(cfg)
     spec = cfg.get("weak_sources") or {}
     if not spec:
         return []
@@ -228,6 +231,66 @@ def load_weak_sources(cfg: dict, rng: random.Random) -> list[dict]:
         kind = "nli" if name in WEAK_NLI else "retrieval"
         sources.append({"name": f"weak/{name}", "kind": kind, "lang": "ja", "inbatch": True, "rows": rows[:want]})
     return sources
+
+
+def load_weakcl(cfg: dict) -> list[dict]:
+    """Load the train split of yasutoshi-lab/freesia-weak-cl (stage 3 v2).
+
+    ja は query_style（keyword / question）ごと、en は 1 つのソースにする（task-homogeneous batching の単位）。
+    負例は無く、in-batch negative だけで学習する。validation・test は読まない。
+
+    Args:
+        cfg (dict): Config with `weakcl_dir` (ja/ と en/ に parquet を持つフォルダ) and optional `max_chars`.
+
+    Returns:
+        list[dict]: Sources with `name`, `kind`, `lang`, `inbatch`, `rows` (negatives are empty lists).
+    """
+    root = os.path.expanduser(cfg["weakcl_dir"])
+    max_chars = cfg.get("max_chars")
+    groups = {}
+    for lang in ("ja", "en"):
+        for path in sorted(glob.glob(os.path.join(root, lang, "train-*.parquet"))):
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=8192, columns=["query", "passage", "query_style"]):
+                for r in batch.to_pylist():
+                    name = f"weak-cl/{lang}-{r['query_style']}" if r["query_style"] else f"weak-cl/{lang}"
+                    pos = r["passage"][:max_chars] if max_chars else r["passage"]
+                    groups.setdefault((name, lang), []).append((r["query"], pos, []))
+    return [{"name": n, "kind": "retrieval", "lang": lang, "inbatch": True, "rows": rows} for (n, lang), rows in groups.items()]
+
+
+SUPCL_TASKS = ("retrieval", "nli", "classification")
+
+
+def load_supcl(cfg: dict) -> list[dict]:
+    """Load the train split of yasutoshi-lab/freesia-supervised-cl (stage 4 v2).
+
+    言語 × task（retrieval / nli / classification）の 6 ソースにする（task-homogeneous batching の単位）。
+    in-batch negative は retrieval だけで使い、nli・classification は自分の負例だけと比べる。
+    classification の負例は他の 29 ラベル。validation・test は読まない。
+
+    Args:
+        cfg (dict): Config with `supcl_dir` (ja/ と en/ に parquet を持つフォルダ), optional `supcl_tasks`
+            (読む task の一覧。省略で全部), `max_chars` and `max_neg_pool`.
+
+    Returns:
+        list[dict]: Sources with `name`, `kind`, `lang`, `inbatch`, `rows`.
+    """
+    root = os.path.expanduser(cfg["supcl_dir"])
+    groups = {}
+    for lang in ("ja", "en"):
+        paths = sorted(glob.glob(os.path.join(root, lang, "train-*.parquet")))
+        assert paths, f"no train parquet under {root}/{lang}"
+        for path in paths:
+            for batch in pq.ParquetFile(path).iter_batches(batch_size=8192, columns=["task", "query", "positive", "negatives"]):
+                for r in batch.to_pylist():
+                    if cfg.get("supcl_tasks") and r["task"] not in cfg["supcl_tasks"]:  # ablation: subset of tasks
+                        continue
+                    pos, negs = _shrink(r["positive"], list(r["negatives"]), cfg)
+                    groups.setdefault((r["task"], lang), []).append((r["query"], pos, negs))
+    assert {t for t, _ in groups} <= set(SUPCL_TASKS), sorted(groups)
+    order = lambda kv: (kv[0][1], SUPCL_TASKS.index(kv[0][0]))  # noqa: E731
+    return [{"name": f"sup-cl/{lang}-{task}", "kind": task, "lang": lang, "inbatch": task == "retrieval", "rows": rows}
+            for (task, lang), rows in sorted(groups.items(), key=order)]
 
 
 class Batcher:

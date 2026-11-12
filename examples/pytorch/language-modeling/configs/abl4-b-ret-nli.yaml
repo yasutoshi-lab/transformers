@@ -1,0 +1,35 @@
+# stage 4 v2 ablation (b-ret-nli): 300 steps from stage 3 v2, compared on JMTEB-lite + English MTEB subset
+# Starts from the stage 3 v2 model (Freesia-300M-Causal-Weak), Bloom fixed closed, mean pooling (Curator decision 2026-10-08).
+# classification uses 7 of its 29 real label negatives (no padding); nli has 1 contradiction, padded with other rows' positives.
+init_from: artifacts/runs/freesia-300m-weak/final
+tokenizer: artifacts/tokenizer-v2/v32k
+output_dir: artifacts/runs/abl4-b-ret-nli
+init_embed_mode_from: null     # keep the embed mode trained in stage 3
+bloom_override: closed
+pooling_mode: mean
+ja_sources: []
+en_sources: []
+supcl_dir: ~/freesia-work/sup-cl/hf   # same files as the HF upload (private)
+batch_queries: 512
+k_neg: 7
+max_query_len: 128
+max_doc_len: 256
+chunk: 256
+temperature: 0.05
+false_neg_margin: 0.1
+focal_gamma: 0.5
+lr: 5.0e-5
+warmup_ratio: 0.05
+weight_decay: 0.01
+epochs: 1
+seed: 42
+log_every: 10
+save_minutes: 30
+max_steps: 300
+gradient_checkpointing: true
+max_chars: 1200
+max_neg_pool: 12
+min_available_gb: 8.0
+supcl_tasks: [retrieval, nli]
+k_neg_by_kind:
+  nli: 1   # contradiction only, no padding
